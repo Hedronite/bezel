@@ -1,28 +1,81 @@
-# omapi-overlay
+<p align="center">
+  <img src="assets/omapi-mark.png" alt="omapi — oma on π" width="280">
+</p>
 
-Stock **omp** pin + thin **`omapi`** wrap + skills flake input + Jev/cursor-agent gates.
+<p align="center">
+  <strong>omapi-overlay</strong> — a Nix flake overlay: stock <strong>omp</strong>, thin <code>omapi</code> wrap, skills input, optional Jev gates.
+</p>
 
-This is an **overlay**, not an omp source fork. Writers stay Kimi/GLM via Cursor auth in omp. Jev is gates only (shadow default). Tower brain-box stays off.
+<p align="center">
+  <a href="https://github.com/VirtualMachinist/omapi-overlay/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/VirtualMachinist/omapi-overlay/ci.yml?branch=main&style=flat&colorA=222222&colorB=3FB950" alt="CI"></a>
+  <a href="#credits-and-license"><img src="https://img.shields.io/badge/License-MIT-58A6FF?style=flat&colorA=222222" alt="MIT license"></a>
+  <a href="https://nixos.org"><img src="https://img.shields.io/badge/Nix-5277C3?style=flat&colorA=222222&logo=nixos&logoColor=white" alt="Nix"></a>
+  <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat&colorA=222222&logo=typescript&logoColor=white" alt="TypeScript"></a>
+  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/Node-339933?style=flat&colorA=222222&logo=nodedotjs&logoColor=white" alt="Node"></a>
+  <a href="https://github.com/can1357/oh-my-pi/releases/tag/v18.2.6"><img src="https://img.shields.io/badge/omp-v18.2.6-8A2BE2?style=flat&colorA=222222" alt="omp v18.2.6 pin"></a>
+</p>
 
-## Overlay, not a fork
+<p align="center">
+  <a href="#what-it-is">What it is</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#packages">Packages</a> ·
+  <a href="#jev">Jev</a> ·
+  <a href="#skills">Skills</a> ·
+  <a href="#platforms">Platforms</a> ·
+  <a href="#status">Status</a> ·
+  <a href="#contributing">Contributing</a>
+</p>
 
-| | This repo | Forever omp fork |
-| --- | --- | --- |
-| Binary humans/widget call | `omapi` (thin wrap) | a rebuilt `omp` |
-| Upstream features | stock omp pin / host `omp` | reimplemented in-tree |
-| Skills | `inputs.skills` only | copied into the fork |
-| Jev | router-only package | vendored lab + secrets |
+<p align="center">
+  Wraps <a href="https://github.com/can1357/oh-my-pi">oh-my-pi</a> (omp), itself a fork of <a href="https://github.com/badlogic/pi-mono">Pi</a> by <a href="https://github.com/mariozechner">@mariozechner</a>.
+</p>
 
-Do not vendor omp sources here. Do not copy Eli `jev-lab` / `config.json` / card material into a derivation.
+---
 
-## Install
+This flake overlays stock [omp](https://github.com/can1357/oh-my-pi) with a thin **`omapi`** command, a skills flake input, and optional Jev gates for `cursor-agent`. Humans and widgets call `omapi`. There is no omp source tree in this repository.
 
-Flake inputs (Home Manager example):
+## What it is
+
+| | This overlay |
+| --- | --- |
+| Command you call | `omapi` |
+| Engine | Stock omp — host `omp` / `$OMP_BIN`, or the documented release pin |
+| Skills | Flake `inputs.skills` only |
+| Jev | Optional `jev-router` + `cursor-agent-jev` (shadow by default) |
+| Consume via | `overlays.default`, `homeManagerModules.default`, or `packages.<system>.*` |
+
+### What it is not
+
+| Claim | Reality |
+| --- | --- |
+| An omp source fork | No omp sources here. Features come from upstream omp. |
+| A rebuilt `omp` | The wrap is `omapi`. Install omp from [omp.sh](https://omp.sh) or use `omapi-pinned`. |
+| A skills product repo | Skills are a flake input. This tree ships a bootstrap stub only. |
+| A Jev lab or key store | The router is Choice-only. Keys stay in the process environment. |
+
+## Quick start
+
+From a clone:
+
+```sh
+nix build .#omapi
+nix build .#jev-router
+nix build .#cursor-agent-jev
+```
+
+Default `omapi` wraps a host `omp` (or `$OMP_BIN`). If neither is present, it exits **127** and tells you so.
+
+To put the pinned upstream binary in the Nix store (~180–240 MB):
+
+```sh
+nix build .#omapi-pinned
+```
+
+### Flake input (Home Manager)
 
 ```nix
 {
   inputs.omapi-overlay.url = "github:VirtualMachinist/omapi-overlay";
-  # skills is already an input of omapi-overlay (sole SoT).
 }
 
 {
@@ -34,73 +87,39 @@ Flake inputs (Home Manager example):
 }
 ```
 
-Direct packages:
+`programs.omapi.enable` installs `omapi` and, by default, `jev-router` and `cursor-agent-jev`. It also symlinks the skills input to `~/.config/omp/agent/skills`.
 
-```sh
-nix build .#omapi            # wrap of host omp / OMP_BIN (fail closed)
-nix build .#omapi-pinned     # wrap of the documented fetchurl pin (180–240MB)
-nix build .#jev-router
-nix build .#cursor-agent-jev
-```
+## Packages
 
-Runtime wrap (default `omapi`): install stock omp from [omp.sh](https://omp.sh) or set `OMP_BIN` to the upstream binary. If neither is present, `omapi` exits 127 and tells you so.
-
-Pinned wrap (`omapi-pinned`): fetchurl of [can1357/oh-my-pi v18.2.6](https://github.com/can1357/oh-my-pi/releases/tag/v18.2.6) per system. Hashes from that release’s `SHA256SUMS.txt`. Not omp source.
-
-Copy host templates (no secrets in them):
-
-- `templates/mcp.json`
-- `templates/models.yml.example`
-
-### wrapProgram contract
-
-`packages/omapi-wrap.nix` uses real `makeWrapper`:
-
-- wrap `${ompBinary}/bin/omp` → `$out/bin/omapi`
-- `--prefix PATH` with node (and jev-router when passed)
-- `--set-default OMAPI_OVERLAY 1`
-- optional `$out/libexec/omapi-planes-shim` via `--run` when `OMAPI_PLANES=1`
-
-Never `--set` `TYPESAFE_API_KEY` or any secret. Never `builtins.getEnv` at build. `HOME`, `OMP_*`, `OMAPI_*`, `JEV_*`, `CURSOR_*` pass through at runtime.
-
-## Skills input (sole SoT)
-
-```nix
-inputs.skills.url = "path:./skills-stub"; # bootstrap — omahedron-skills 404s
-# later: inputs.skills.url = "github:VirtualMachinist/omahedron-skills";
-```
-
-Home Manager only does:
-
-```nix
-xdg.configFile."omp/agent/skills".source = skills;
-```
-
-There is no repo-root `skills/` product tree. Swap the input URL when the skills repo exists; do not fork a second copy into this overlay.
-
-## Shadow Jev
-
-Default `JEV_MODE=shadow`. Choice is logged; **shadow never blocks**.
-
-```sh
-export TYPESAFE_API_KEY=   # host card store / your shell — not the flake
-JEV_MODE=shadow JEV_ROUTER="$(command -v jev-router)" \
-  cursor-agent-jev "<intent>" -- <cursor-agent args>
-```
-
-| Env | Role |
+| Package | What it is |
 | --- | --- |
-| `JEV_MODE=shadow` | default; log Choice, always exec `cursor-agent` |
-| `JEV_MODE=active` | honor `gate: auto` only (flip is out of scope for this GOAL) |
-| `JEV_BYPASS=1` | skip router, exec `cursor-agent` |
-| `JEV_ROUTER` | override router binary |
-| `TYPESAFE_API_KEY` | runtime only; `@typesafe-ai/sdk` reads it |
+| **`omapi`** | Thin wrap of host `omp` / `$OMP_BIN`. Fail-closed if neither exists. |
+| **`omapi-pinned`** | Same wrap, targeting a fetchurl pin of [oh-my-pi v18.2.6](https://github.com/can1357/oh-my-pi/releases/tag/v18.2.6). Not omp source. |
+| **`jev-router`** | Node router: asks Typesafe Choice, prints a JSON verdict. Also `jev-router --check` for a shadow diff check. |
+| **`cursor-agent-jev`** | Runs `jev-router`, then execs `cursor-agent` (`cursor-agent` must already be on `PATH`). |
 
-`jev-router` is Choice-only (`packages/jev-router/`, `@typesafe-ai/sdk`). No secret config in the package. Missing key: shadow continues unclassified; active fail-closes.
+## Jev
 
-Shadow **check** (Stanley patterns, not the Stanley CLI): git diff evidence →
-available-gate → Jev Choice/Noul → code thresholds →
-`findings` / `parked` / `notChecked`. Empty findings are **not** approval.
+Jev is a **shadow-first** decision gate in front of `cursor-agent`. Shadow logs a Choice and **never blocks**. `TYPESAFE_API_KEY` is runtime-only — set it in the process environment; the flake does not bake it.
+
+```sh
+# TYPESAFE_API_KEY must already be in the environment
+JEV_MODE=shadow cursor-agent-jev "<intent>" -- <cursor-agent args>
+```
+
+| Variable | Role |
+| --- | --- |
+| `JEV_MODE=shadow` | Default. Log the Choice; always run `cursor-agent`. |
+| `JEV_MODE=active` | Honor `gate: auto` only; otherwise exit 2. |
+| `JEV_BYPASS=1` | Kill switch: skip the router and run `cursor-agent`. |
+| `JEV_ROUTER` | Override the router binary. |
+| `TYPESAFE_API_KEY` | Runtime only. [`@typesafe-ai/sdk`](https://www.npmjs.com/package/@typesafe-ai/sdk) reads it. |
+
+Missing key: shadow continues unclassified; active fail-closes.
+
+### Shadow check
+
+`jev-router --check` reads git-diff evidence, applies an available-gate, asks a Choice, then applies code thresholds. The result is `findings`, `parked`, and `notChecked`. Empty findings are **not** approval.
 
 ```sh
 JEV_MODE=shadow jev-router --check --intent "<task>"
@@ -109,24 +128,48 @@ JEV_MODE=shadow jev-router --check --intent "<task>"
 
 Skill: `skills-stub/check`. How to run: [docs/SPIKE-stanley.md](docs/SPIKE-stanley.md).
 
-## Arch honesty
+## Skills
+
+Skills are a flake input — the sole source of truth. This repo ships `skills-stub` so the input is a valid omp skills tree (`*/SKILL.md`) on day one. The stub includes `bootstrap` and a shadow `check` skill (`jev-router --check`). Home Manager only symlinks that store path to `~/.config/omp/agent/skills`. When you have a real skills repo, change `inputs.skills.url` and the lock; do not copy a second `skills/` tree into this overlay.
+
+## Platforms
 
 Declared systems: `aarch64-darwin`, `x86_64-darwin`, `aarch64-linux`, `x86_64-linux`.
 
-| system | omp pin (v18.2.6) | Expectation |
+| System | omp pin (v18.2.6) | Availability |
 | --- | --- | --- |
-| aarch64-darwin | `omp-darwin-arm64` | Primary (castle/tower) — pin present; build when you want the binary in the store |
-| x86_64-darwin | `omp-darwin-x64` | Declared and pinned (Jupi r1 missed this slice). nixpkgs 26.11 dropped Intel macOS — this flake evaluates that slice against `nixpkgs-26.05-darwin`, not by omitting the system |
-| aarch64-linux | `omp-linux-arm64` | Mesh minis / Bot — pin present |
-| x86_64-linux | `omp-linux-x64` | lathe — pin present; GHA runner can eval/build overlay packages |
+| `aarch64-darwin` | `omp-darwin-arm64` | Pin present. No hosted runner in this workflow. |
+| `x86_64-darwin` | `omp-darwin-x64` | Pin present. Evaluated against `nixpkgs-26.05-darwin` (nixpkgs 26.11 dropped Intel macOS). No hosted runner in this workflow. |
+| `aarch64-linux` | `omp-linux-arm64` | Pin present. No hosted runner in this workflow. |
+| `x86_64-linux` | `omp-linux-x64` | Pin present. GitHub Actions evaluates all four systems and builds overlay packages here. |
 
-If a future release drops a slice, `packages/omp-pin.nix` **throws** for that system (no fake Hydra green). CI on this repo only **runs** the `x86_64-linux` job; the other three matrix rows **skip with a reason** (no matching hosted runner). Skipping is not a pretend build.
+If a future omp release drops a slice, `packages/omp-pin.nix` **throws** for that system. A skipped CI row is a skip with a reason, not a pretend build.
 
-`nix flake check` / `nix build .#omapi .#jev-router .#cursor-agent-jev` do **not** download the omp pin. `nix build .#omapi-pinned` does (180–240MB).
+`nix flake check` and `nix build .#omapi .#jev-router .#cursor-agent-jev` do **not** download the pin. `nix build .#omapi-pinned` does.
 
-## Out of scope
+## Status
 
-- Migrating live castle `~/.local/bin/omapi`
-- Flipping Jev from shadow to active
-- Omapilot widget chrome
-- Replacing omp upstream features
+- Overlay packages evaluate on all four declared systems.
+- CI on this repo **runs** the `x86_64-linux` job; the other three matrix rows skip (no matching hosted runner).
+- `omapi-pinned` is opt-in (180–240 MB fetchurl).
+- Jev defaults to shadow. `jev-router --check` is the shadow diff check; empty findings are not approval.
+- Skills ship as `skills-stub` until you swap the input URL.
+
+## Contributing
+
+Issues and pull requests are welcome. Match CI from a clone:
+
+```sh
+nix flake check -L
+nix build -L .#omapi .#jev-router .#cursor-agent-jev
+```
+
+Do not commit secrets. `TYPESAFE_API_KEY` and other keys belong in the process environment, not the flake.
+
+## Credits and license
+
+MIT. This overlay wraps stock [oh-my-pi](https://github.com/can1357/oh-my-pi) (omp). omp is a fork of [Pi](https://github.com/badlogic/pi-mono) by [Mario Zechner](https://github.com/mariozechner).
+
+- [GitHub](https://github.com/VirtualMachinist/omapi-overlay)
+- [Upstream omp](https://github.com/can1357/oh-my-pi)
+- [omp.sh](https://omp.sh)

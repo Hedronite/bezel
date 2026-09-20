@@ -1,0 +1,9 @@
+result
+result-*
+.direnv
+node_modules
+.env
+.env.*
+!.env.example
+*.swp
+.DS_Store

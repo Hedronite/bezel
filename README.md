@@ -98,6 +98,17 @@ JEV_MODE=shadow JEV_ROUTER="$(command -v jev-router)" \
 
 `jev-router` is Choice-only (`packages/jev-router/`, `@typesafe-ai/sdk`). No secret config in the package. Missing key: shadow continues unclassified; active fail-closes.
 
+Shadow **check** (Stanley patterns, not the Stanley CLI): git diff evidence →
+available-gate → Jev Choice/Noul → code thresholds →
+`findings` / `parked` / `notChecked`. Empty findings are **not** approval.
+
+```sh
+JEV_MODE=shadow jev-router --check --intent "<task>"
+# or: --diff-file packages/jev-router/testdata/skip-marker.diff
+```
+
+Skill: `skills-stub/check`. How to run: [docs/SPIKE-stanley.md](docs/SPIKE-stanley.md).
+
 ## Arch honesty
 
 Declared systems: `aarch64-darwin`, `x86_64-darwin`, `aarch64-linux`, `x86_64-linux`.

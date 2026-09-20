@@ -73,6 +73,9 @@ nix flake check -L   # includes jev-router-unit + jev-check-shadow
 
 `JEV_BYPASS=1` still skips Choice and never blocks.
 
+Loop-stop / escalate (Suraj #4 + #10) is a sibling spike:
+[docs/SPIKE-loop-stop.md](SPIKE-loop-stop.md). `--check` is unchanged.
+
 ## Out of scope (hard no)
 
 Stanley CLI/npm · Pi fallback · improve-worker · `--promote-candidate` ·

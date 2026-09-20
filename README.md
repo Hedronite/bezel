@@ -95,8 +95,8 @@ nix build .#omapi-pinned
 | --- | --- |
 | **`omapi`** | Thin wrap of host `omp` / `$OMP_BIN`. Fail-closed if neither exists. |
 | **`omapi-pinned`** | Same wrap, targeting a fetchurl pin of [oh-my-pi v18.2.6](https://github.com/can1357/oh-my-pi/releases/tag/v18.2.6). Not omp source. |
-| **`jev-router`** | Node router: asks Typesafe Choice, prints a JSON verdict. Also `jev-router --check` for a shadow diff check. |
-| **`cursor-agent-jev`** | Runs `jev-router`, then execs `cursor-agent` (`cursor-agent` must already be on `PATH`). |
+| **`jev-router`** | Node router: asks Typesafe Choice, prints a JSON verdict. Loop-stop (`continue` / `stop` / `escalate`) plus `jev-router --check` for a shadow diff check. |
+| **`cursor-agent-jev`** | Runs `jev-router`, then execs `cursor-agent` (`cursor-agent` must already be on `PATH`). Shadow never blocks; active honors continue/auto only. |
 
 ## Jev
 
@@ -110,12 +110,18 @@ JEV_MODE=shadow cursor-agent-jev "<intent>" -- <cursor-agent args>
 | Variable | Role |
 | --- | --- |
 | `JEV_MODE=shadow` | Default. Log the Choice; always run `cursor-agent`. |
-| `JEV_MODE=active` | Honor `gate: auto` only; otherwise exit 2. |
+| `JEV_MODE=active` | Honor `continue` / `gate: auto` only. `stop` / `escalate` exit 2 (no exec). |
 | `JEV_BYPASS=1` | Kill switch: skip the router and run `cursor-agent`. |
 | `JEV_ROUTER` | Override the router binary. |
+| `JEV_STEP_DIGEST` | Optional step / trajectory digest for the loop-stop Choice. |
 | `TYPESAFE_API_KEY` | Runtime only. [`@typesafe-ai/sdk`](https://www.npmjs.com/package/@typesafe-ai/sdk) reads it. |
 
-Missing key: shadow continues unclassified; active fail-closes.
+Missing key: shadow continues unclassified; active fail-closes (escalate / hold).
+
+Loop-stop Choice is `{continue, stop, escalate}` over intent + optional digest.
+Thresholds: `omapi-loop-stop-policy@1` (`conf ≥ 0.6`, `p ≥ 0.55`, `margin ≥ 0.15`).
+`choice: escalate` + `gate: hold` is HITL — not auto-retry. How to run:
+[docs/SPIKE-loop-stop.md](docs/SPIKE-loop-stop.md).
 
 ### Shadow check
 
@@ -152,7 +158,7 @@ If a future omp release drops a slice, `packages/omp-pin.nix` **throws** for tha
 - Overlay packages evaluate on all four declared systems.
 - CI on this repo **runs** the `x86_64-linux` job; the other three matrix rows skip (no matching hosted runner).
 - `omapi-pinned` is opt-in (180–240 MB fetchurl).
-- Jev defaults to shadow. `jev-router --check` is the shadow diff check; empty findings are not approval.
+- Jev defaults to shadow. `jev-router --check` is the shadow diff check; empty findings are not approval. Loop-stop is shadow-first; active `stop`/`escalate` do not exec.
 - Skills ship as `skills-stub` until you swap the input URL.
 
 ## Contributing

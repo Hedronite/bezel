@@ -147,7 +147,7 @@
           jev-router-unit = pkgs.runCommand "jev-router-unit" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
             set -eu
             cp -r ${./packages/jev-router}/. .
-            node test.mjs
+            JEV_ROUTER_BIN="${lib.getExe self.packages.${system}.jev-router}" node test.mjs
             echo ok >"$out"
           '';
 
@@ -172,7 +172,89 @@
             out3="$(JEV_MODE=shadow "$router" "probe intent")"
             echo "$out3" | jq -e '.missingKey == true and .blocked == false and .workflow.shadow == true'
             echo "$out3" | jq -e '.facts.capabilities != null'
+            echo "$out3" | jq -e '.autoRetry == false and .autoPromote == false and .loop.reason == "missing_key"'
+            echo "$out3" | jq -e '.loopStopPolicy == "omapi-loop-stop-policy@1"'
 
+            echo ok >"$out"
+          '';
+
+          # Shadow/active wrap: fake router + fake cursor-agent. No live Jev.
+          # Shadow always execs; active stop/escalate do not; continue/auto execs.
+          jev-loop-stop-wrap = pkgs.runCommand "jev-loop-stop-wrap" { nativeBuildInputs = [ pkgs.jq ]; } ''
+            set -eu
+            wrap="${lib.getExe self.packages.${system}.cursor-agent-jev}"
+            work="$(mktemp -d)"
+            mkdir -p "$work/bin"
+
+            cat >"$work/bin/cursor-agent" <<'EOS'
+            #!/bin/sh
+            printf 'ran:%s\n' "$*" >> "$AGENT_LOG"
+            EOS
+            chmod +x "$work/bin/cursor-agent"
+
+            write_router() {
+              name="$1"
+              json="$2"
+              cat >"$work/bin/$name" <<EOF
+            #!/bin/sh
+            printf '%s\n' '$json'
+            exit 0
+            EOF
+              chmod +x "$work/bin/$name"
+            }
+
+            write_router router-continue '{"ok":true,"choice":"continue","gate":"auto","blocked":false,"exec":true,"hitl":false,"autoRetry":false}'
+            write_router router-stop '{"ok":true,"choice":"stop","gate":"hold","blocked":true,"exec":false,"hitl":false,"autoRetry":false}'
+            write_router router-escalate '{"ok":true,"choice":"escalate","gate":"hold","blocked":true,"exec":false,"hitl":true,"autoRetry":false,"autoPromote":false}'
+            write_router router-auto '{"ok":true,"choice":"unclassified","gate":"auto","blocked":false,"exec":true,"hitl":false}'
+
+            export PATH="$work/bin:$PATH"
+
+            export AGENT_LOG="$work/shadow-stop.log"
+            : >"$AGENT_LOG"
+            JEV_MODE=shadow JEV_ROUTER="$work/bin/router-stop" "$wrap" "intent" -- --probe
+            grep -q '^ran:' "$AGENT_LOG"
+
+            export AGENT_LOG="$work/shadow-escalate.log"
+            : >"$AGENT_LOG"
+            JEV_MODE=shadow JEV_ROUTER="$work/bin/router-escalate" "$wrap" "intent" -- --probe
+            grep -q '^ran:' "$AGENT_LOG"
+
+            export AGENT_LOG="$work/active-stop.log"
+            : >"$AGENT_LOG"
+            set +e
+            JEV_MODE=active JEV_ROUTER="$work/bin/router-stop" "$wrap" "intent" -- --probe
+            rc=$?
+            set -e
+            test "$rc" -ne 0
+            if [ -s "$AGENT_LOG" ]; then
+              echo "active stop must not exec cursor-agent" >&2
+              exit 1
+            fi
+
+            export AGENT_LOG="$work/active-escalate.log"
+            : >"$AGENT_LOG"
+            set +e
+            JEV_MODE=active JEV_ROUTER="$work/bin/router-escalate" "$wrap" "intent" -- --probe
+            rc=$?
+            set -e
+            test "$rc" -ne 0
+            if [ -s "$AGENT_LOG" ]; then
+              echo "active escalate must not exec cursor-agent" >&2
+              exit 1
+            fi
+
+            export AGENT_LOG="$work/active-continue.log"
+            : >"$AGENT_LOG"
+            JEV_MODE=active JEV_ROUTER="$work/bin/router-continue" "$wrap" "intent" -- --probe
+            grep -q '^ran:' "$AGENT_LOG"
+
+            export AGENT_LOG="$work/active-auto.log"
+            : >"$AGENT_LOG"
+            JEV_MODE=active JEV_ROUTER="$work/bin/router-auto" "$wrap" "intent" -- --probe
+            grep -q '^ran:' "$AGENT_LOG"
+
+            grep -q 'stop/escalate do not exec' "$wrap"
             echo ok >"$out"
           '';
         }

@@ -142,6 +142,39 @@
             echo "$outj" | ${lib.getExe pkgs.jq} -e '.bypass == true and .gate == "auto" and .blocked == false'
             echo ok >"$out"
           '';
+
+          # Unit tests: policy, available-gate, check envelope. No live Jev.
+          jev-router-unit = pkgs.runCommand "jev-router-unit" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
+            set -eu
+            cp -r ${./packages/jev-router}/. .
+            node test.mjs
+            echo ok >"$out"
+          '';
+
+          # Shadow --check without TYPESAFE_API_KEY: continues, never "approved".
+          jev-check-shadow = pkgs.runCommand "jev-check-shadow" { nativeBuildInputs = [ pkgs.jq ]; } ''
+            set -eu
+            router="${lib.getExe self.packages.${system}.jev-router}"
+            skip="${./packages/jev-router/testdata/skip-marker.diff}"
+            empty="${./packages/jev-router/testdata/empty.diff}"
+
+            outj="$(JEV_MODE=shadow "$router" --check --intent probe --diff-file "$skip")"
+            echo "$outj" | jq -e '.approval == false and .emptyFindingsAreNotApproval == true and .missingKey == true'
+            echo "$outj" | jq -e '[.findings[].flag] | index("skip_marker_added") != null'
+            if echo "$outj" | grep -Ei 'approved'; then
+              echo "empty/partial findings must not print approved" >&2
+              exit 1
+            fi
+
+            out2="$(JEV_MODE=shadow "$router" --check --intent probe --diff-file "$empty")"
+            echo "$out2" | jq -e '.status == "no_diff" and .approval == false and .facts.diffPresent == false'
+
+            out3="$(JEV_MODE=shadow "$router" "probe intent")"
+            echo "$out3" | jq -e '.missingKey == true and .blocked == false and .workflow.shadow == true'
+            echo "$out3" | jq -e '.facts.capabilities != null'
+
+            echo ok >"$out"
+          '';
         }
       );
     };

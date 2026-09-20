@@ -54,7 +54,10 @@ jobs:
             echo "secret-looking assignment in tree" >&2
             exit 1
           fi
-          if git grep -nE -- '--set(=|[[:space:]])TYPESAFE_API_KEY|builtins.getEnv[[:space:]]*"TYPESAFE_API_KEY"' ; then
+          # Comments that say "never --set TYPESAFE_API_KEY" are the policy, not a bake.
+          hits="$(git grep -nE -- '--set(=|[[:space:]])TYPESAFE_API_KEY|builtins.getEnv[[:space:]]*"TYPESAFE_API_KEY"' | grep -vE ':[0-9]+:[[:space:]]*#' || true)"
+          if [ -n "$hits" ]; then
+            echo "$hits" >&2
             echo "flake must not bake TYPESAFE_API_KEY" >&2
             exit 1
           fi

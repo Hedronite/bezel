@@ -210,17 +210,17 @@
 
             export PATH="$work/bin:$PATH"
 
-            AGENT_LOG="$work/shadow-stop.log"
+            export AGENT_LOG="$work/shadow-stop.log"
             : >"$AGENT_LOG"
             JEV_MODE=shadow JEV_ROUTER="$work/bin/router-stop" "$wrap" "intent" -- --probe
             grep -q '^ran:' "$AGENT_LOG"
 
-            AGENT_LOG="$work/shadow-escalate.log"
+            export AGENT_LOG="$work/shadow-escalate.log"
             : >"$AGENT_LOG"
             JEV_MODE=shadow JEV_ROUTER="$work/bin/router-escalate" "$wrap" "intent" -- --probe
             grep -q '^ran:' "$AGENT_LOG"
 
-            AGENT_LOG="$work/active-stop.log"
+            export AGENT_LOG="$work/active-stop.log"
             : >"$AGENT_LOG"
             set +e
             JEV_MODE=active JEV_ROUTER="$work/bin/router-stop" "$wrap" "intent" -- --probe
@@ -232,7 +232,7 @@
               exit 1
             fi
 
-            AGENT_LOG="$work/active-escalate.log"
+            export AGENT_LOG="$work/active-escalate.log"
             : >"$AGENT_LOG"
             set +e
             JEV_MODE=active JEV_ROUTER="$work/bin/router-escalate" "$wrap" "intent" -- --probe
@@ -244,12 +244,12 @@
               exit 1
             fi
 
-            AGENT_LOG="$work/active-continue.log"
+            export AGENT_LOG="$work/active-continue.log"
             : >"$AGENT_LOG"
             JEV_MODE=active JEV_ROUTER="$work/bin/router-continue" "$wrap" "intent" -- --probe
             grep -q '^ran:' "$AGENT_LOG"
 
-            AGENT_LOG="$work/active-auto.log"
+            export AGENT_LOG="$work/active-auto.log"
             : >"$AGENT_LOG"
             JEV_MODE=active JEV_ROUTER="$work/bin/router-auto" "$wrap" "intent" -- --probe
             grep -q '^ran:' "$AGENT_LOG"

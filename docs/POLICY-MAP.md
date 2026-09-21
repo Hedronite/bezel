@@ -22,6 +22,7 @@ both read it. There is no second verdict type.
 | `bypass` | bool | `isJevBypass` |
 | `mode` | `shadow` (default), `active` | `JEV_MODE` |
 | `pretool` | stamp, only when a tool name/class was passed | The map below |
+| `permission` | shell / write / mcp only | Permission catalog. Shadow unless `JEV_PERMISSION_MODE=active` and a key is set |
 
 `pretool` is `{ matched, class, policyId, choiceFamily, toolName, mismatch }`.
 It names which existing policy the tool class is accountable to. It does not
@@ -34,8 +35,8 @@ and it is not Jev state.
 
 ## Policy map
 
-Same three policy ids already in `policy.mjs`. No new catalog (permission
-catalogs are PR-B).
+Same three policy ids already in `policy.mjs`. Permission catalogs wrap these
+ids. They do not add a policyId. See [Permission catalogs](#permission-catalogs).
 
 | Class | policyId | Choice family | Grok tool names |
 | --- | --- | --- | --- |
@@ -59,8 +60,10 @@ Shell lists both public spellings on purpose. The hook alias table maps `Bash`
 to `run_terminal_command`. The shell tool id list uses `run_terminal_cmd`.
 
 The live router still asks the existing loop-stop Choice for every class.
-S1 does not add a per-class question set. The stamp is how castle and the
-overlay name the same policyId until a later catalog (PR-B) exists.
+Shell with a command body adds one permission Choice on that same call
+(`allow` / `deny` / `ask`), and code maps it onto `omapi-loop-stop-policy@1`.
+Write and MCP do not add a Choice. Write wraps the check writer. MCP wraps
+route-workflow (typed Calls are PR-C). The stamp remains the policyId.
 
 ## Matcher
 
@@ -123,6 +126,12 @@ not a hook crash. Grok fail-opens on timeout, exit 1, and malformed output.
 In active mode a router failure or unparseable stdout is still an explicit
 deny. In shadow that failure stays defer.
 
+`JEV_PERMISSION_MODE=active` is a second gate. While it is honoring, a
+permission stop / escalate denies even if `JEV_MODE` is shadow, and a
+permission continue does not override a loop stop. The hook still emits
+`defer` or `deny`, never `allow`. Default permission mode is shadow, so this
+row does not fire until Marci re-COMPATs. See [Permission catalogs](#permission-catalogs).
+
 `decision` is only `defer` or `deny`.
 
 ## Castle apply checklist
@@ -161,10 +170,12 @@ fi
 ```
 
 Then read `toolName` from the PreToolUse JSON on stdin and call the existing
-router (honor `JEV_ROUTER`, default `jev-router`):
+router (honor `JEV_ROUTER`, default `jev-router`). Pass the command body or
+write path as `--tool-input` when the event has one. Shell permission stays
+`ask` until that body is present. Do not add a second router or a second client.
 
 ```sh
-jev-router --tool-name "$toolName" --intent "$toolName"
+jev-router --tool-name "$toolName" --tool-input "$toolInput" --intent "$toolName"
 ```
 
 Map the GateVerdict with the table above (`jq` on `.choice`, `.gate`,
@@ -179,7 +190,38 @@ node packages/jev-router/test.mjs
 nix flake check -L   # jev-router-unit, jev-bypass (1, true, and not yes)
 ```
 
+## Permission catalogs
+
+PR-B. One client. Three existing policy ids. Shadow default.
+
+| Class | policyId | Catalog | Parent map |
+| --- | --- | --- | --- |
+| `shell` | `omapi-loop-stop-policy@1` | new `allow` / `deny` / `ask` Choice, same call, only when the command body is present | allow→continue, deny→stop, ask→escalate. Thresholds are the loop-stop policy. No command body → ask, not allow. |
+| `write` | `omapi-check-policy@1` | none. Wraps the check writer | Code deny (`secret_path`, `skip_marker_added`, `assertions_removed`, `test_file_deleted`) → deny→stop. Anything else, including empty findings → ask→writer parent. Empty findings are not approval. |
+| `mcp` | `omapi-route-workflow-policy@1` | none. Wraps route-workflow | ask→escalate. A workflow pick is not permission to call the tool. Typed Calls are PR-C. |
+
+Code deny wins over a model allow. A permission continue does not clear a loop stop. The hook never emits `{"decision":"allow"}`.
+
+`permission.policyId` is one of those three ids. Classes outside this table (`web`, `subagent`, `read_file`) get no `permission` object, so they cannot carry an orphan policyId.
+
+Key absent forces this surface to shadow (`reason: missing_key` or a logged code deny with `blocked: false`). That stays correct even if `JEV_PERMISSION_MODE=active`. `JEV_MODE=active` does not honor the catalog.
+
+### Flip after Marci re-COMPAT
+
+Do not export active before Marci re-COMPATs this surface. Shadow is the default and the only mode that is in COMPAT today.
+
+After re-COMPAT:
+
+```sh
+export JEV_PERMISSION_MODE=active
+```
+
+Only the literal `active` honors. `yes`, `true`, and `JEV_MODE=active` do not. Unset the variable to return to shadow. `cursor-agent-jev` still keys exec off `JEV_MODE`. The PreToolUse hook reads `permission.honor` via `pretoolHookDecision`.
+
+How to run: [SPIKE-permission.md](SPIKE-permission.md).
+
 ## Out of scope
 
-Permission catalogs (PR-B). Bend2, sec-routing, batteries. A second TypeSafe
-client. Changing default `JEV_MODE` to `active`. Baking keys into the flake.
+MCP typed Calls (PR-C). A tiny follow-up catalog (PR-D). Bend2, sec-routing,
+batteries. A second TypeSafe client. Changing default `JEV_MODE` or default
+`JEV_PERMISSION_MODE` to `active`. Baking keys into the flake.

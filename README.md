@@ -136,6 +136,8 @@ Skill: `skills-stub/check`. How to run: [docs/SPIKE-stanley.md](docs/SPIKE-stanl
 
 Grok Build `PreToolUse` uses the same three policy ids and the same `JEV_BYPASS` predicate. Tool class → `policyId` map, matcher (shell / write / MCP included), and the castle hook checklist: [docs/POLICY-MAP.md](docs/POLICY-MAP.md). The hook calls `jev-router`; it is not a second TypeSafe client. Default mode stays shadow.
 
+Shell, write, and MCP also get a permission catalog that wraps those same policy ids (`allow`→continue, `deny`→stop, `ask`→escalate or the writer parent). It defaults to shadow. `JEV_PERMISSION_MODE=active` honors it only after Marci re-COMPATs; `JEV_MODE=active` does not flip it. A missing `TYPESAFE_API_KEY` keeps that surface on shadow. How to run: [docs/SPIKE-permission.md](docs/SPIKE-permission.md).
+
 ## Skills
 
 Skills are a flake input — the sole source of truth. This repo ships `skills-stub` so the input is a valid omp skills tree (`*/SKILL.md`) on day one. The stub includes `bootstrap` and a shadow `check` skill (`jev-router --check`). Home Manager only symlinks that store path to `~/.config/omp/agent/skills`. When you have a real skills repo, change `inputs.skills.url` and the lock; do not copy a second `skills/` tree into this overlay.

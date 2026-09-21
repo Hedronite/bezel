@@ -71,7 +71,7 @@ node packages/jev-router/test.mjs
 nix flake check -L   # includes jev-router-unit + jev-check-shadow
 ```
 
-`JEV_BYPASS=1` still skips Choice and never blocks.
+`JEV_BYPASS=1` or `JEV_BYPASS=true` still skips the exec Choice and never blocks. `--check` is not the kill switch. Shared predicate: [POLICY-MAP.md](POLICY-MAP.md).
 
 Loop-stop / escalate (Suraj #4 + #10) is a sibling spike:
 [docs/SPIKE-loop-stop.md](SPIKE-loop-stop.md). `--check` is unchanged.

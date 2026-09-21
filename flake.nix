@@ -138,8 +138,14 @@
 
           jev-bypass = pkgs.runCommand "jev-bypass" { } ''
             set -eu
-            outj="$(JEV_BYPASS=1 ${lib.getExe self.packages.${system}.jev-router} "probe intent")"
-            echo "$outj" | ${lib.getExe pkgs.jq} -e '.bypass == true and .gate == "auto" and .blocked == false'
+            router="${lib.getExe self.packages.${system}.jev-router}"
+            jq="${lib.getExe pkgs.jq}"
+            outj="$(JEV_BYPASS=1 "$router" "probe intent")"
+            echo "$outj" | "$jq" -e '.bypass == true and .gate == "auto" and .blocked == false'
+            outt="$(JEV_BYPASS=true "$router" --tool-name run_terminal_command "probe intent")"
+            echo "$outt" | "$jq" -e '.bypass == true and .pretool.class == "shell" and .pretool.policyId == "omapi-loop-stop-policy@1"'
+            outn="$(JEV_BYPASS=yes "$router" "probe intent")"
+            echo "$outn" | "$jq" -e '.bypass == false and .missingKey == true and .blocked == false'
             echo ok >"$out"
           '';
 
@@ -147,6 +153,7 @@
           jev-router-unit = pkgs.runCommand "jev-router-unit" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
             set -eu
             cp -r ${./packages/jev-router}/. .
+            cp ${./docs/POLICY-MAP.md} ./POLICY-MAP.md
             JEV_ROUTER_BIN="${lib.getExe self.packages.${system}.jev-router}" node test.mjs
             echo ok >"$out"
           '';

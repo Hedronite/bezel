@@ -5,6 +5,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCheck } from "./check.mjs";
@@ -14,9 +15,19 @@ import {
   applyCheckThresholds,
   applyLoopStopThresholds,
   applyRoutingThresholds,
+  CHECK_KIND_LABELS,
   CHECK_POLICY,
+  isJevBypass,
+  LOOP_STOP_LABELS,
   LOOP_STOP_POLICY,
+  matchPretoolClass,
+  MCP_TOOL_PATTERN,
+  PRETOOL_CLASSES,
+  PRETOOL_MATCHER,
+  pretoolHookDecision,
+  pretoolStamp,
   ROUTING_POLICY,
+  WORKFLOW_LABELS,
 } from "./policy.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -437,6 +448,179 @@ const cases = [
     assert.equal(payload.approval, false);
     assert.equal(payload.emptyFindingsAreNotApproval, true);
     assert.ok(payload.findings.some((row) => row.flag === "skip_marker_added"));
+  }),
+
+  test("JEV_BYPASS is only 1 or true", () => {
+    assert.equal(isJevBypass("1"), true);
+    assert.equal(isJevBypass("true"), true);
+    for (const value of ["", "0", "false", "yes", "TRUE", " 1", undefined]) {
+      assert.equal(isJevBypass(value), false, String(value));
+    }
+  }),
+
+  test("PreToolUse map stays on the three existing policyIds", () => {
+    const ids = new Set(PRETOOL_CLASSES.map((row) => row.policyId));
+    assert.deepEqual(
+      [...ids].sort(),
+      ["omapi-check-policy@1", "omapi-loop-stop-policy@1", "omapi-route-workflow-policy@1"].sort(),
+    );
+    assert.equal(PRETOOL_CLASSES.length, 5);
+    const byId = Object.fromEntries(PRETOOL_CLASSES.map((row) => [row.id, row]));
+    assert.equal(byId.shell.policyId, LOOP_STOP_POLICY.version);
+    assert.deepEqual(byId.shell.choiceFamily, LOOP_STOP_LABELS);
+    assert.equal(byId.web.policyId, LOOP_STOP_POLICY.version);
+    assert.equal(byId.subagent.policyId, LOOP_STOP_POLICY.version);
+    assert.equal(byId.write.policyId, CHECK_POLICY.version);
+    assert.deepEqual(byId.write.choiceFamily, CHECK_KIND_LABELS);
+    assert.equal(byId.mcp.policyId, ROUTING_POLICY.version);
+    assert.deepEqual(byId.mcp.choiceFamily, WORKFLOW_LABELS);
+    assert.equal(byId.mcp.pattern, MCP_TOOL_PATTERN);
+  }),
+
+  test("matcher covers legacy castle tokens plus shell, write, and MCP", () => {
+    const legacy = ["web_search", "WebFetch", "spawn_subagent", "Task"];
+    const shell = ["Bash", "run_terminal_command", "run_terminal_cmd"];
+    const write = ["Write", "Edit", "MultiEdit", "search_replace"];
+    const mcp = ["linear__save_issue", "mcp__filesystem__read_file"];
+    for (const name of [...legacy, ...shell, ...write, ...mcp]) {
+      assert.ok(matchPretoolClass(name), name);
+      assert.match(name, new RegExp(PRETOOL_MATCHER));
+    }
+    assert.equal(matchPretoolClass("web_search").id, "web");
+    assert.equal(matchPretoolClass("WebFetch").id, "web");
+    assert.equal(matchPretoolClass("web_fetch").id, "web");
+    assert.equal(matchPretoolClass("Task").id, "subagent");
+    assert.equal(matchPretoolClass("spawn_subagent").id, "subagent");
+    assert.equal(matchPretoolClass("run_terminal_cmd").id, "shell");
+    assert.equal(matchPretoolClass("search_replace").id, "write");
+    assert.equal(matchPretoolClass("linear__save_issue").id, "mcp");
+    assert.equal(matchPretoolClass("read_file"), null);
+    assert.equal(matchPretoolClass("grep"), null);
+    assert.equal(matchPretoolClass("use_tool"), null);
+    assert.equal(matchPretoolClass("search_tool"), null);
+    assert.equal(matchPretoolClass("todo_write"), null);
+    assert.ok(PRETOOL_MATCHER.includes("WebFetch"));
+    assert.ok(PRETOOL_MATCHER.includes("run_terminal_command"));
+    assert.ok(PRETOOL_MATCHER.includes("search_replace"));
+    assert.ok(PRETOOL_MATCHER.includes(MCP_TOOL_PATTERN));
+  }),
+
+  test("pretoolHookDecision defers or denies and never allows", () => {
+    const samples = [
+      [{ bypass: true, mode: "active", choice: "stop", gate: "hold", blocked: true }, "defer", "bypass"],
+      [{ mode: "shadow", choice: "stop", gate: "hold", blocked: false }, "defer", "shadow"],
+      [{ mode: "active", choice: "continue", gate: "auto", blocked: false }, "defer", "exec"],
+      [{ mode: "active", choice: "unclassified", gate: "auto", blocked: false }, "defer", "exec"],
+      [
+        {
+          mode: "active",
+          choice: "stop",
+          gate: "hold",
+          blocked: true,
+          pretool: { policyId: "omapi-loop-stop-policy@1" },
+        },
+        "deny",
+        "jev choice=stop gate=hold policy=omapi-loop-stop-policy@1",
+      ],
+      [{ mode: "active", choice: "escalate", gate: "hold", blocked: true }, "deny", "jev choice=escalate gate=hold"],
+      [{ mode: "active", choice: "unclassified", gate: "hold", blocked: false }, "deny", "jev choice=unclassified gate=hold"],
+    ];
+    for (const [verdict, decision, reason] of samples) {
+      const hook = pretoolHookDecision(verdict);
+      assert.equal(hook.decision, decision);
+      assert.notEqual(hook.decision, "allow");
+      assert.equal(hook.reason, reason);
+      assert.equal(hook.exitCode, decision === "deny" ? 2 : 0);
+      assert.equal(hook.action, decision);
+    }
+    const stamp = pretoolStamp({ toolName: "search_replace" });
+    assert.equal(stamp.class, "write");
+    assert.equal(stamp.policyId, CHECK_POLICY.version);
+    assert.equal(pretoolStamp({}), null);
+    assert.equal(pretoolStamp({ toolName: "read_file" }).matched, false);
+    const mismatch = pretoolStamp({ toolName: "Bash", toolClass: "write" });
+    assert.equal(mismatch.class, "write");
+    assert.equal(mismatch.policyId, CHECK_POLICY.version);
+    assert.equal(mismatch.mismatch, true);
+  }),
+
+  test("router source keeps one client and the shared bypass predicate", () => {
+    const routerSrc = readFileSync(join(here, "jev-router.mjs"), "utf8");
+    assert.match(routerSrc, /isJevBypass\(process\.env\.JEV_BYPASS\)/);
+    assert.equal((routerSrc.match(/new TypeSafeClient\(/g) || []).length, 2);
+  }),
+
+  test("POLICY-MAP.md quotes the matcher and the castle files", () => {
+    const docPath = [join(here, "POLICY-MAP.md"), join(here, "../../docs/POLICY-MAP.md")].find((path) =>
+      existsSync(path),
+    );
+    assert.ok(docPath, "POLICY-MAP.md missing");
+    const doc = readFileSync(docPath, "utf8");
+    const block = doc.match(/```pretool-matcher\n([\s\S]*?)\n```/);
+    assert.ok(block, "pretool-matcher fence missing");
+    assert.equal(block[1], PRETOOL_MATCHER);
+    assert.match(doc, /~\/\.grok\/hooks\/jev-omapi\.json/);
+    assert.match(doc, /~\/\.grok\/hooks\/bin\/jev-pretool\.sh/);
+    assert.match(doc, /hooks\.PreToolUse\[0\]\.matcher/);
+    assert.match(doc, /JEV_BYPASS/);
+    assert.match(doc, /never `allow`|never emits `allow`|do not emit `allow`|Never emit `\{"decision":"allow"\}`/);
+  }),
+
+  test("JEV_BYPASS=true stamps shell; yes does not bypass; check ignores bypass", () => {
+    const bin = process.env.JEV_ROUTER_BIN;
+    if (!bin) return;
+    const bypass = spawnSync(bin, ["--tool-name", "run_terminal_command", "probe intent"], {
+      env: { ...process.env, JEV_MODE: "shadow", JEV_BYPASS: "true", TYPESAFE_API_KEY: "" },
+      encoding: "utf8",
+    });
+    assert.equal(bypass.status, 0, bypass.stderr);
+    const bypassPayload = JSON.parse(bypass.stdout.trim().split("\n").at(-1));
+    assert.equal(bypassPayload.bypass, true);
+    assert.equal(bypassPayload.choice, "bypass");
+    assert.equal(bypassPayload.blocked, false);
+    assert.equal(bypassPayload.pretool.class, "shell");
+    assert.equal(bypassPayload.pretool.policyId, "omapi-loop-stop-policy@1");
+    assert.equal(bypassPayload.pretool.matched, true);
+
+    const notBypass = spawnSync(bin, ["probe intent"], {
+      env: { ...process.env, JEV_MODE: "shadow", JEV_BYPASS: "yes", TYPESAFE_API_KEY: "" },
+      encoding: "utf8",
+    });
+    assert.equal(notBypass.status, 0, notBypass.stderr);
+    const notPayload = JSON.parse(notBypass.stdout.trim().split("\n").at(-1));
+    assert.equal(notPayload.bypass, false);
+    assert.equal(notPayload.missingKey, true);
+    assert.equal(notPayload.pretool, undefined);
+
+    const writeStamp = spawnSync(bin, ["--tool-name", "search_replace", "probe intent"], {
+      env: { ...process.env, JEV_MODE: "shadow", JEV_BYPASS: "", TYPESAFE_API_KEY: "" },
+      encoding: "utf8",
+    });
+    assert.equal(writeStamp.status, 0, writeStamp.stderr);
+    const writePayload = JSON.parse(writeStamp.stdout.trim().split("\n").at(-1));
+    assert.equal(writePayload.pretool.class, "write");
+    assert.equal(writePayload.pretool.policyId, "omapi-check-policy@1");
+    assert.equal(writePayload.bypass, false);
+
+    const mcpStamp = spawnSync(bin, ["--tool-name", "linear__save_issue", "probe intent"], {
+      env: { ...process.env, JEV_MODE: "shadow", JEV_BYPASS: "1", TYPESAFE_API_KEY: "" },
+      encoding: "utf8",
+    });
+    assert.equal(mcpStamp.status, 0, mcpStamp.stderr);
+    const mcpPayload = JSON.parse(mcpStamp.stdout.trim().split("\n").at(-1));
+    assert.equal(mcpPayload.bypass, true);
+    assert.equal(mcpPayload.pretool.class, "mcp");
+    assert.equal(mcpPayload.pretool.policyId, "omapi-route-workflow-policy@1");
+
+    const check = spawnSync(bin, ["--check", "--intent", "probe", "--diff-file", skipDiff], {
+      env: { ...process.env, JEV_MODE: "shadow", JEV_BYPASS: "1", TYPESAFE_API_KEY: "" },
+      encoding: "utf8",
+    });
+    assert.equal(check.status, 0, check.stderr);
+    const checkPayload = JSON.parse(check.stdout.trim().split("\n").at(-1));
+    assert.equal(checkPayload.workflow, "check");
+    assert.equal(checkPayload.approval, false);
+    assert.notEqual(checkPayload.choice, "bypass");
   }),
 ];
 

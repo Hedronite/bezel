@@ -2,6 +2,8 @@
 
 # cursor-agent-jev "<intent>" [--step-digest TEXT] -- <cursor-agent args>
 # JEV_ROUTER / JEV_MODE / JEV_BYPASS / JEV_STEP_DIGEST at runtime. Shadow never blocks.
+# JEV_BYPASS is only "1" or "true" — same predicate as isJevBypass in
+# packages/jev-router/policy.mjs. Do not add another spelling here.
 # Active: stop/escalate do NOT exec; continue / gate=auto execs. Escalate is HITL.
 
 writeShellApplication {

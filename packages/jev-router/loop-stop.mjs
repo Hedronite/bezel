@@ -4,7 +4,7 @@
  * Escalate is human-in-the-loop — not auto-retry, not auto-promote.
  */
 
-import { LOOP_STOP_POLICY, applyLoopStopThresholds } from "./policy.mjs";
+import { LOOP_STOP_POLICY, applyLoopStopThresholds, gateVerdictAllowsExec } from "./policy.mjs";
 
 export function clipDigest(text, policy = LOOP_STOP_POLICY) {
   const max = Number(policy.maxDigestChars || 4000);
@@ -13,16 +13,10 @@ export function clipDigest(text, policy = LOOP_STOP_POLICY) {
 
 /**
  * Shadow always execs. Active: stop/escalate do not exec; continue/auto execs.
+ * Same table as gateVerdictAllowsExec (PreToolUse defer/deny uses it too).
  */
-export function shouldExecAgent({ mode, choice, gate, blocked } = {}) {
-  const m = String(mode || "shadow").toLowerCase();
-  if (m !== "active") return true;
-  const c = String(choice || "");
-  const g = String(gate || "");
-  const b = blocked === true || blocked === "true";
-  if (c === "stop" || c === "escalate") return false;
-  if (b) return false;
-  return c === "continue" || g === "auto";
+export function shouldExecAgent(verdict) {
+  return gateVerdictAllowsExec(verdict);
 }
 
 /**

@@ -111,7 +111,7 @@ JEV_MODE=shadow cursor-agent-jev "<intent>" -- <cursor-agent args>
 | --- | --- |
 | `JEV_MODE=shadow` | Default. Log the Choice; always run `cursor-agent`. |
 | `JEV_MODE=active` | Honor `continue` / `gate: auto` only. `stop` / `escalate` exit 2 (no exec). |
-| `JEV_BYPASS=1` | Kill switch: skip the router and run `cursor-agent`. |
+| `JEV_BYPASS=1` or `true` | Kill switch. Same predicate everywhere: skip the router and run `cursor-agent`. Other values (`yes`, `false`, `0`) are not a bypass. |
 | `JEV_ROUTER` | Override the router binary. |
 | `JEV_STEP_DIGEST` | Optional step / trajectory digest for the loop-stop Choice. |
 | `TYPESAFE_API_KEY` | Runtime only. [`@typesafe-ai/sdk`](https://www.npmjs.com/package/@typesafe-ai/sdk) reads it. |
@@ -133,6 +133,8 @@ JEV_MODE=shadow jev-router --check --intent "<task>"
 ```
 
 Skill: `skills-stub/check`. How to run: [docs/SPIKE-stanley.md](docs/SPIKE-stanley.md).
+
+Grok Build `PreToolUse` uses the same three policy ids and the same `JEV_BYPASS` predicate. Tool class → `policyId` map, matcher (shell / write / MCP included), and the castle hook checklist: [docs/POLICY-MAP.md](docs/POLICY-MAP.md). The hook calls `jev-router`; it is not a second TypeSafe client. Default mode stays shadow.
 
 ## Skills
 

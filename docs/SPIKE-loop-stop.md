@@ -64,7 +64,7 @@ jev-router --check --intent "<task>" --diff-file packages/jev-router/testdata/sk
 | `active` | `stop` | **no** — exit 2 |
 | `active` | `escalate` | **no** — exit 2, HITL, no auto-retry |
 
-`JEV_BYPASS=1` still skips the router.
+`JEV_BYPASS=1` or `JEV_BYPASS=true` still skips the router. Same predicate as `cursor-agent-jev` (`yes` does not). See [POLICY-MAP.md](POLICY-MAP.md).
 
 ## Escalate JSON (HITL)
 

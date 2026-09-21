@@ -5,10 +5,12 @@
  * Runtime env — never baked at build, never read from this package:
  *   TYPESAFE_API_KEY  host card store / export only
  *   JEV_MODE          shadow (default) | active
- *   JEV_BYPASS        1|true skips the Choice call
+ *   JEV_BYPASS        1|true skips the Choice call (same predicate as cursor-agent-jev)
  *   JEV_MODEL         optional, default jev-latest
  *   JEV_INTENT        fallback when no argv intent
  *   JEV_STEP_DIGEST   optional trajectory / step digest for loop-stop
+ *   JEV_TOOL_NAME     optional Grok PreToolUse tool name (stamps policyId; no second client)
+ *   JEV_TOOL_CLASS    optional class id (web|subagent|shell|write|mcp)
  *
  * Shadow: log Choice, never block.
  * Active: stop/escalate do not exec (exit 2); continue / gate=auto execs.
@@ -28,7 +30,14 @@ import { choice, noul, TypeSafeClient } from "@typesafe-ai/sdk";
 import { runCheck } from "./check.mjs";
 import { gatherDiff, gatherFacts } from "./facts.mjs";
 import { decideLoopStop, missingKeyLoop } from "./loop-stop.mjs";
-import { applyRoutingThresholds, CHECK_POLICY, LOOP_STOP_POLICY, ROUTING_POLICY } from "./policy.mjs";
+import {
+  applyRoutingThresholds,
+  CHECK_POLICY,
+  isJevBypass,
+  LOOP_STOP_POLICY,
+  pretoolStamp,
+  ROUTING_POLICY,
+} from "./policy.mjs";
 
 function parseArgs(argv) {
   const args = argv.slice(2);
@@ -39,6 +48,8 @@ function parseArgs(argv) {
     repo: "",
     diffFile: "",
     stepDigest: "",
+    toolName: "",
+    toolClass: "",
   };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -74,6 +85,16 @@ function parseArgs(argv) {
       i += 1;
       continue;
     }
+    if ((arg === "--tool-name" || arg === "--tool") && args[i + 1]) {
+      out.toolName = args[i + 1];
+      i += 1;
+      continue;
+    }
+    if (arg === "--tool-class" && args[i + 1]) {
+      out.toolClass = args[i + 1];
+      i += 1;
+      continue;
+    }
     if (arg && !arg.startsWith("-") && !out.intent) {
       out.intent = arg;
     }
@@ -83,11 +104,18 @@ function parseArgs(argv) {
   if (!out.repo) out.repo = process.env.JEV_REPO || "";
   if (!out.base) out.base = process.env.JEV_BASE || "";
   if (!out.stepDigest) out.stepDigest = process.env.JEV_STEP_DIGEST || "";
+  if (!out.toolName) out.toolName = process.env.JEV_TOOL_NAME || "";
+  if (!out.toolClass) out.toolClass = process.env.JEV_TOOL_CLASS || "";
   return out;
 }
 
 function emit(obj) {
-  process.stdout.write(`${JSON.stringify(obj)}\n`);
+  const stamp = pretoolStamp({ toolName: args.toolName, toolClass: args.toolClass });
+  const payload = stamp ? { ...obj, pretool: stamp } : obj;
+  if (stamp && stamp.mismatch) {
+    log(`pretool class mismatch tool=${args.toolName} class=${args.toolClass} (stamp uses --tool-class)`);
+  }
+  process.stdout.write(`${JSON.stringify(payload)}\n`);
 }
 
 function log(msg) {
@@ -118,11 +146,12 @@ function attachFacts(payload, facts) {
 
 const args = parseArgs(process.argv);
 const mode = String(process.env.JEV_MODE || "shadow").toLowerCase();
-const bypass = process.env.JEV_BYPASS === "1" || process.env.JEV_BYPASS === "true";
+const bypass = isJevBypass(process.env.JEV_BYPASS);
 const intent = args.intent;
 const stepDigest = args.stepDigest;
 const facts = gatherFacts(evidenceOpts(args));
 
+// Kill switch skips the exec Choice. `--check` is a different workflow and still runs.
 if (bypass && !args.check) {
   log("JEV_BYPASS set — skip Choice");
   emit(

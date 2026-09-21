@@ -35,6 +35,157 @@ export const LOOP_STOP_POLICY = {
 
 export const WORKFLOW_LABELS = ["check", "review", "cannot_tell"];
 export const LOOP_STOP_LABELS = ["continue", "stop", "escalate"];
+export const CHECK_KIND_LABELS = ["none", "test_safety", "task_mismatch", "cannot_tell"];
+
+/**
+ * JEV_BYPASS kill switch. Same spelling as packages/cursor-agent-jev.nix:
+ * only "1" or "true". Anything else (unset, "0", "false", "yes") is not a bypass.
+ * The wrap then execs cursor-agent. The Grok hook must defer, not emit allow.
+ */
+export function isJevBypass(value) {
+  return value === "1" || value === "true";
+}
+
+/**
+ * Shared exec table for a GateVerdict. Shadow always execs.
+ * Active: stop/escalate do not; blocked does not; continue or gate=auto does.
+ * This is not an auto-allow. Callers that sit in front of a permission prompt
+ * must defer, not emit decision "allow".
+ */
+export function gateVerdictAllowsExec({ mode, choice, gate, blocked } = {}) {
+  const m = String(mode || "shadow").toLowerCase();
+  if (m !== "active") return true;
+  const c = String(choice || "");
+  const g = String(gate || "");
+  const b = blocked === true || blocked === "true";
+  if (c === "stop" || c === "escalate") return false;
+  if (b) return false;
+  return c === "continue" || g === "auto";
+}
+
+/**
+ * Map a jev-router GateVerdict onto one Grok PreToolUse decision.
+ * Code denies. Bypass wins over a stop-shaped payload (the wrap skips the router).
+ * Non-deny is `defer` — never `allow`.
+ */
+export function pretoolHookDecision(verdict = {}) {
+  const bypass = verdict.bypass === true;
+  const allows = bypass || gateVerdictAllowsExec(verdict);
+  if (allows) {
+    let reason = "shadow";
+    if (bypass) reason = "bypass";
+    else if (String(verdict.mode || "shadow").toLowerCase() === "active") reason = "exec";
+    return { action: "defer", exitCode: 0, decision: "defer", reason };
+  }
+  const choice = verdict.choice != null ? String(verdict.choice) : "unclassified";
+  const gate = verdict.gate != null ? String(verdict.gate) : "hold";
+  const policyId = verdict.pretool && verdict.pretool.policyId ? verdict.pretool.policyId : "";
+  const policy = policyId ? ` policy=${policyId}` : "";
+  return {
+    action: "deny",
+    exitCode: 2,
+    decision: "deny",
+    reason: `jev choice=${choice} gate=${gate}${policy}`,
+  };
+}
+
+/**
+ * Grok Build PreToolUse tool class → existing omapi policyId / Choice family.
+ * One map for castle (~/.grok/hooks/jev-omapi.json) and this router.
+ * Not a new policy and not a second TypeSafe client. Permission catalogs are PR-B.
+ *
+ * Shell / web / subagent stay on loop-stop (the exec gate).
+ * Write stays on check (the diff/hunk gate).
+ * MCP stays on route-workflow (the capability gate).
+ *
+ * MCP names are the qualified `server__tool` form Grok puts on the event
+ * (e.g. linear__save_issue), not the `use_tool` dispatcher.
+ * Shell includes both public spellings: hook alias `run_terminal_command`
+ * and the shell tool id `run_terminal_cmd`.
+ */
+export const MCP_TOOL_PATTERN = "[A-Za-z0-9][A-Za-z0-9_.-]*__[A-Za-z0-9_.-]+";
+
+export const PRETOOL_CLASSES = [
+  {
+    id: "web",
+    policyId: LOOP_STOP_POLICY.version,
+    choiceFamily: LOOP_STOP_LABELS,
+    tools: ["web_search", "WebSearch", "web_fetch", "WebFetch"],
+  },
+  {
+    id: "subagent",
+    policyId: LOOP_STOP_POLICY.version,
+    choiceFamily: LOOP_STOP_LABELS,
+    tools: ["spawn_subagent", "Task"],
+  },
+  {
+    id: "shell",
+    policyId: LOOP_STOP_POLICY.version,
+    choiceFamily: LOOP_STOP_LABELS,
+    tools: ["Bash", "run_terminal_command", "run_terminal_cmd"],
+  },
+  {
+    id: "write",
+    policyId: CHECK_POLICY.version,
+    choiceFamily: CHECK_KIND_LABELS,
+    tools: ["Write", "Edit", "MultiEdit", "search_replace"],
+  },
+  {
+    id: "mcp",
+    policyId: ROUTING_POLICY.version,
+    choiceFamily: WORKFLOW_LABELS,
+    tools: [],
+    pattern: MCP_TOOL_PATTERN,
+  },
+];
+
+export const PRETOOL_MATCHER = PRETOOL_CLASSES.flatMap((row) => row.tools).concat(MCP_TOOL_PATTERN).join("|");
+
+const MCP_TOOL_RE = new RegExp(`^${MCP_TOOL_PATTERN}$`);
+
+export function pretoolClassById(id) {
+  const key = String(id || "");
+  return PRETOOL_CLASSES.find((row) => row.id === key) || null;
+}
+
+/** Full-string class match. Null when the tool is outside the PreToolUse map. */
+export function matchPretoolClass(toolName) {
+  const name = String(toolName || "");
+  if (!name) return null;
+  for (const row of PRETOOL_CLASSES) {
+    if (row.tools.includes(name)) return row;
+  }
+  if (MCP_TOOL_RE.test(name)) return pretoolClassById("mcp");
+  return null;
+}
+
+export function pretoolStamp({ toolName = "", toolClass = "" } = {}) {
+  const name = String(toolName || "");
+  const requested = String(toolClass || "");
+  if (!name && !requested) return null;
+  const byName = name ? matchPretoolClass(name) : null;
+  const byClass = requested ? pretoolClassById(requested) : null;
+  const row = byClass || byName;
+  const mismatch = Boolean(byClass && byName && byClass.id !== byName.id);
+  if (!row) {
+    return {
+      matched: false,
+      class: null,
+      policyId: null,
+      choiceFamily: [],
+      toolName: name || null,
+      mismatch,
+    };
+  }
+  return {
+    matched: true,
+    class: row.id,
+    policyId: row.policyId,
+    choiceFamily: row.choiceFamily.slice(),
+    toolName: name || null,
+    mismatch,
+  };
+}
 
 /**
  * Apply routing thresholds to a Jev Choice answer.

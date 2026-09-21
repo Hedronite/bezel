@@ -67,19 +67,57 @@ export function gateVerdictAllowsExec({ mode, choice, gate, blocked } = {}) {
  * Map a jev-router GateVerdict onto one Grok PreToolUse decision.
  * Code denies. Bypass wins over a stop-shaped payload (the wrap skips the router).
  * Non-deny is `defer` — never `allow`.
+ *
+ * `JEV_MODE` shadow defers unless `permission.honor` is set. That bit is the
+ * permission surface (`JEV_PERMISSION_MODE=active` and a key). A permission
+ * continue does not override a loop stop. A permission stop/escalate denies
+ * even when the loop would exec.
  */
 export function pretoolHookDecision(verdict = {}) {
-  const bypass = verdict.bypass === true;
-  const allows = bypass || gateVerdictAllowsExec(verdict);
-  if (allows) {
-    let reason = "shadow";
-    if (bypass) reason = "bypass";
-    else if (String(verdict.mode || "shadow").toLowerCase() === "active") reason = "exec";
-    return { action: "defer", exitCode: 0, decision: "defer", reason };
+  if (verdict.bypass === true) {
+    return { action: "defer", exitCode: 0, decision: "defer", reason: "bypass" };
   }
-  const choice = verdict.choice != null ? String(verdict.choice) : "unclassified";
-  const gate = verdict.gate != null ? String(verdict.gate) : "hold";
-  const policyId = verdict.pretool && verdict.pretool.policyId ? verdict.pretool.policyId : "";
+
+  const permission = verdict.permission && typeof verdict.permission === "object" ? verdict.permission : null;
+  const permissionHonors = Boolean(
+    permission && permission.honor === true && String(permission.mode || "").toLowerCase() === "active",
+  );
+  const modeActive = String(verdict.mode || "shadow").toLowerCase() === "active";
+  if (!modeActive && !permissionHonors) {
+    return { action: "defer", exitCode: 0, decision: "defer", reason: "shadow" };
+  }
+
+  const loopAllows = gateVerdictAllowsExec({ ...verdict, mode: "active" });
+  const permBlocks = Boolean(
+    permissionHonors &&
+      (permission.blocked === true || permission.choice === "stop" || permission.choice === "escalate"),
+  );
+
+  let choice = verdict.choice != null ? String(verdict.choice) : "unclassified";
+  let gate = verdict.gate != null ? String(verdict.gate) : "hold";
+  let blocked = verdict.blocked === true || verdict.blocked === "true";
+  let allows = false;
+
+  if (permBlocks) {
+    choice = permission.choice != null ? String(permission.choice) : "stop";
+    gate = permission.gate != null ? String(permission.gate) : "hold";
+    blocked = true;
+    allows = false;
+  } else if (!loopAllows) {
+    allows = false;
+  } else {
+    if (permissionHonors && permission.choice) choice = String(permission.choice);
+    if (permissionHonors && permission.gate) gate = String(permission.gate);
+    blocked = false;
+    allows = gateVerdictAllowsExec({ mode: "active", choice, gate, blocked });
+  }
+
+  if (allows) {
+    return { action: "defer", exitCode: 0, decision: "defer", reason: "exec" };
+  }
+
+  const policyId =
+    (verdict.pretool && verdict.pretool.policyId) || (permission && permission.policyId) || "";
   const policy = policyId ? ` policy=${policyId}` : "";
   return {
     action: "deny",
@@ -92,7 +130,8 @@ export function pretoolHookDecision(verdict = {}) {
 /**
  * Grok Build PreToolUse tool class → existing omapi policyId / Choice family.
  * One map for castle (~/.grok/hooks/jev-omapi.json) and this router.
- * Not a new policy and not a second TypeSafe client. Permission catalogs are PR-B.
+ * Not a new policy and not a second TypeSafe client.
+ * Permission catalogs wrap these ids (packages/jev-router/permission.mjs).
  *
  * Shell / web / subagent stay on loop-stop (the exec gate).
  * Write stays on check (the diff/hunk gate).

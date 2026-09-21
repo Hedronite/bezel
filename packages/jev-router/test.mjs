@@ -12,6 +12,17 @@ import { runCheck } from "./check.mjs";
 import { availableCapabilities, diffPresent, gatherDiff, gatherFacts } from "./facts.mjs";
 import { clipDigest, decideLoopStop, missingKeyLoop, shouldExecAgent } from "./loop-stop.mjs";
 import {
+  applyPermissionVerdict,
+  collectWriteFlags,
+  decidePermission,
+  mapPermissionLabel,
+  PARENT_POLICY_IDS,
+  permissionBypass,
+  permissionSurface,
+  PERMISSION_SURFACES,
+  resolvePermissionMode,
+} from "./permission.mjs";
+import {
   applyCheckThresholds,
   applyLoopStopThresholds,
   applyRoutingThresholds,
@@ -548,6 +559,10 @@ const cases = [
     const routerSrc = readFileSync(join(here, "jev-router.mjs"), "utf8");
     assert.match(routerSrc, /isJevBypass\(process\.env\.JEV_BYPASS\)/);
     assert.equal((routerSrc.match(/new TypeSafeClient\(/g) || []).length, 2);
+    assert.equal((routerSrc.match(/client\.systemOne\(/g) || []).length, 3);
+    assert.match(routerSrc, /shellPermissionQuestion\(choice\)/);
+    assert.match(routerSrc, /JEV_PERMISSION_MODE/);
+    assert.match(routerSrc, /requestedMode: process\.env\.JEV_PERMISSION_MODE/);
   }),
 
   test("POLICY-MAP.md quotes the matcher and the castle files", () => {
@@ -564,6 +579,11 @@ const cases = [
     assert.match(doc, /hooks\.PreToolUse\[0\]\.matcher/);
     assert.match(doc, /JEV_BYPASS/);
     assert.match(doc, /never `allow`|never emits `allow`|do not emit `allow`|Never emit `\{"decision":"allow"\}`/);
+    assert.match(doc, /JEV_PERMISSION_MODE/);
+    assert.match(doc, /Marci re-COMPAT/);
+    assert.match(doc, /allow→continue/);
+    assert.match(doc, /Key absent forces this surface to shadow/);
+    assert.match(doc, /JEV_MODE=active` does not honor the catalog/);
   }),
 
   test("JEV_BYPASS=true stamps shell; yes does not bypass; check ignores bypass", () => {
@@ -621,6 +641,412 @@ const cases = [
     assert.equal(checkPayload.workflow, "check");
     assert.equal(checkPayload.approval, false);
     assert.notEqual(checkPayload.choice, "bypass");
+  }),
+
+  test("permission catalogs wrap the three policy ids and do not orphan one", () => {
+    assert.deepEqual(
+      PERMISSION_SURFACES.map((row) => row.policyId),
+      [LOOP_STOP_POLICY.version, CHECK_POLICY.version, ROUTING_POLICY.version],
+    );
+    for (const id of PERMISSION_SURFACES.map((row) => row.policyId)) {
+      assert.ok(PARENT_POLICY_IDS.includes(id), id);
+    }
+    assert.equal(permissionSurface("shell").newCatalog, true);
+    assert.equal(permissionSurface("shell").parent, "loop-stop");
+    assert.equal(permissionSurface("write").newCatalog, false);
+    assert.equal(permissionSurface("write").parent, "writer");
+    assert.equal(permissionSurface("mcp").newCatalog, false);
+    assert.equal(permissionSurface("mcp").catalog, "route-workflow");
+    assert.equal(permissionSurface("web"), null);
+    assert.equal(permissionSurface("subagent"), null);
+    assert.equal(decidePermission({ classId: "read_file", hasKey: true, requestedMode: "active" }), null);
+    assert.equal(decidePermission({ classId: "web", hasKey: true, label: "allow" }), null);
+  }),
+
+  test("allow→continue, deny→stop, ask→escalate or writer parent", () => {
+    const shell = permissionSurface("shell");
+    const write = permissionSurface("write");
+    assert.equal(mapPermissionLabel("allow", shell), "continue");
+    assert.equal(mapPermissionLabel("deny", shell), "stop");
+    assert.equal(mapPermissionLabel("ask", shell), "escalate");
+    assert.equal(mapPermissionLabel("ask", write), "writer");
+    assert.equal(mapPermissionLabel("allow", write), "continue");
+    assert.equal(mapPermissionLabel("deny", permissionSurface("mcp")), "stop");
+    assert.equal(resolvePermissionMode(undefined), "shadow");
+    assert.equal(resolvePermissionMode("yes"), "shadow");
+    assert.equal(resolvePermissionMode("true"), "shadow");
+    assert.equal(resolvePermissionMode("ACTIVE"), "active");
+  }),
+
+  test("key absent forces permission shadow even if active was requested", () => {
+    const shell = decidePermission({
+      classId: "shell",
+      requestedMode: "active",
+      hasKey: false,
+      contentPresent: true,
+      label: "deny",
+      confidence: 0.99,
+      probabilities: { allow: 0.01, deny: 0.98, ask: 0.01 },
+    });
+    assert.equal(shell.mode, "shadow");
+    assert.equal(shell.honor, false);
+    assert.equal(shell.shadow, true);
+    assert.equal(shell.blocked, false);
+    assert.equal(shell.missingKey, true);
+    assert.equal(shell.reason, "missing_key");
+    assert.equal(shell.choice, "unclassified");
+    assert.equal(shell.policyId, "omapi-loop-stop-policy@1");
+    assert.equal(shell.autoAllow, false);
+
+    const write = decidePermission({
+      classId: "write",
+      requestedMode: "active",
+      hasKey: false,
+      path: ".env",
+      label: "allow",
+    });
+    assert.equal(write.mode, "shadow");
+    assert.equal(write.blocked, false);
+    assert.equal(write.honor, false);
+    assert.equal(write.missingKey, true);
+    assert.equal(write.codeDeny, true);
+    assert.equal(write.mapped, "stop");
+    assert.equal(write.label, "deny");
+    assert.equal(write.modelLabel, "allow");
+    assert.equal(write.policyId, "omapi-check-policy@1");
+    assert.equal(write.choice, "unclassified");
+  }),
+
+  test("shell permission uses loop-stop thresholds and does not allow without content", () => {
+    const confident = {
+      confidence: 0.9,
+      probabilities: { allow: 0.8, deny: 0.1, ask: 0.1 },
+    };
+    const allowed = decidePermission({
+      classId: "shell",
+      requestedMode: "shadow",
+      hasKey: true,
+      contentPresent: true,
+      label: "allow",
+      ...confident,
+    });
+    assert.equal(allowed.mode, "shadow");
+    assert.equal(allowed.honor, false);
+    assert.equal(allowed.blocked, false);
+    assert.equal(allowed.choice, "unclassified");
+    assert.equal(allowed.mapped, "continue");
+    assert.equal(allowed.label, "allow");
+    assert.equal(allowed.policyId, LOOP_STOP_POLICY.version);
+    assert.equal(allowed.newCatalog, true);
+    assert.equal(allowed.autoAllow, false);
+
+    const honored = decidePermission({
+      classId: "shell",
+      requestedMode: "active",
+      hasKey: true,
+      contentPresent: true,
+      label: "allow",
+      ...confident,
+    });
+    assert.equal(honored.honor, true);
+    assert.equal(honored.choice, "continue");
+    assert.equal(honored.gate, "auto");
+    assert.equal(honored.blocked, false);
+    assert.equal(honored.mapped, "continue");
+
+    const uncertain = decidePermission({
+      classId: "shell",
+      requestedMode: "active",
+      hasKey: true,
+      contentPresent: true,
+      label: "allow",
+      confidence: 0.4,
+      probabilities: { allow: 0.4, deny: 0.35, ask: 0.25 },
+    });
+    assert.equal(uncertain.mapped, "escalate");
+    assert.equal(uncertain.choice, "escalate");
+    assert.equal(uncertain.blocked, true);
+    assert.equal(uncertain.modelLabel, "allow");
+    assert.notEqual(uncertain.choice, "continue");
+
+    const noContent = decidePermission({
+      classId: "shell",
+      requestedMode: "active",
+      hasKey: true,
+      contentPresent: false,
+      label: "allow",
+      ...confident,
+    });
+    assert.equal(noContent.label, "ask");
+    assert.equal(noContent.mapped, "escalate");
+    assert.equal(noContent.reason, "no_content");
+    assert.equal(noContent.modelLabel, "allow");
+    assert.equal(noContent.choice, "escalate");
+
+    const ask = decidePermission({
+      classId: "shell",
+      requestedMode: "active",
+      hasKey: true,
+      contentPresent: true,
+      label: "ask",
+      confidence: 0.2,
+      probabilities: { allow: 0.2, deny: 0.2, ask: 0.6 },
+    });
+    assert.equal(ask.mapped, "escalate");
+    assert.equal(ask.choice, "escalate");
+    assert.equal(ask.hitl, true);
+  }),
+
+  test("write permission wraps the writer and never treats empty findings as allow", () => {
+    const flags = collectWriteFlags({ diffText: readFileSync(skipDiff, "utf8") });
+    assert.ok(flags.includes("skip_marker_added"));
+    const denied = decidePermission({
+      classId: "write",
+      requestedMode: "active",
+      hasKey: true,
+      flags,
+      label: "allow",
+    });
+    assert.equal(denied.codeDeny, true);
+    assert.equal(denied.label, "deny");
+    assert.equal(denied.modelLabel, "allow");
+    assert.equal(denied.mapped, "stop");
+    assert.equal(denied.choice, "stop");
+    assert.equal(denied.blocked, true);
+    assert.equal(denied.newCatalog, false);
+    assert.equal(denied.policyId, CHECK_POLICY.version);
+    assert.equal(denied.parent, "writer");
+
+    const empty = decidePermission({
+      classId: "write",
+      requestedMode: "active",
+      hasKey: true,
+      diffText: "",
+      path: "src/app.js",
+      label: "allow",
+    });
+    assert.equal(empty.codeDeny, false);
+    assert.equal(empty.label, "ask");
+    assert.equal(empty.mapped, "writer");
+    assert.equal(empty.choice, "escalate");
+    assert.equal(empty.reason, "empty_findings_not_approval");
+    assert.notEqual(empty.mapped, "continue");
+    assert.equal(empty.autoAllow, false);
+
+    const shadowEmpty = decidePermission({
+      classId: "write",
+      requestedMode: "shadow",
+      hasKey: true,
+      path: "src/app.js",
+    });
+    assert.equal(shadowEmpty.honor, false);
+    assert.equal(shadowEmpty.blocked, false);
+    assert.equal(shadowEmpty.choice, "unclassified");
+    assert.equal(shadowEmpty.mapped, "writer");
+  }),
+
+  test("mcp permission wraps route-workflow and does not add a catalog", () => {
+    const mcp = decidePermission({
+      classId: "mcp",
+      requestedMode: "active",
+      hasKey: true,
+      routingOutcome: "check",
+      label: "allow",
+    });
+    assert.equal(mcp.newCatalog, false);
+    assert.equal(mcp.catalog, "route-workflow");
+    assert.equal(mcp.policyId, ROUTING_POLICY.version);
+    assert.equal(mcp.label, "ask");
+    assert.equal(mcp.mapped, "escalate");
+    assert.equal(mcp.choice, "escalate");
+    assert.equal(mcp.blocked, true);
+    assert.equal(mcp.reason, "workflow_is_not_permission");
+    assert.equal(mcp.autoAllow, false);
+
+    const unknown = decidePermission({
+      classId: "mcp",
+      requestedMode: "shadow",
+      hasKey: true,
+    });
+    assert.equal(unknown.honor, false);
+    assert.equal(unknown.blocked, false);
+    assert.equal(unknown.reason, "cannot_tell");
+    assert.equal(unknown.policyId, "omapi-route-workflow-policy@1");
+  }),
+
+  test("permission continue does not auto-allow over a parent stop", () => {
+    const permission = decidePermission({
+      classId: "shell",
+      requestedMode: "active",
+      hasKey: true,
+      contentPresent: true,
+      label: "allow",
+      confidence: 0.9,
+      probabilities: { allow: 0.8, deny: 0.1, ask: 0.1 },
+    });
+    const merged = applyPermissionVerdict(
+      { choice: "stop", gate: "hold", blocked: true, exec: false, hitl: false, mode: "active" },
+      permission,
+    );
+    assert.equal(merged.choice, "stop");
+    assert.equal(merged.blocked, true);
+    assert.equal(merged.permission.mapped, "continue");
+    assert.equal(merged.permission.autoAllow, false);
+
+    const deny = decidePermission({
+      classId: "shell",
+      requestedMode: "active",
+      hasKey: true,
+      contentPresent: true,
+      label: "deny",
+      confidence: 0.9,
+      probabilities: { allow: 0.05, deny: 0.9, ask: 0.05 },
+    });
+    const stopped = applyPermissionVerdict(
+      { choice: "continue", gate: "auto", blocked: false, exec: true, mode: "shadow" },
+      deny,
+    );
+    assert.equal(deny.choice, "stop");
+    assert.equal(stopped.choice, "stop");
+    assert.equal(stopped.blocked, true);
+    assert.equal(stopped.exec, false);
+
+    const shadowDeny = decidePermission({
+      classId: "shell",
+      requestedMode: "shadow",
+      hasKey: true,
+      contentPresent: true,
+      label: "deny",
+      confidence: 0.9,
+      probabilities: { allow: 0.05, deny: 0.9, ask: 0.05 },
+    });
+    const logged = applyPermissionVerdict(
+      { choice: "continue", gate: "auto", blocked: false, exec: true, mode: "shadow" },
+      shadowDeny,
+    );
+    assert.equal(logged.choice, "continue");
+    assert.equal(logged.blocked, false);
+    assert.equal(logged.permission.mapped, "stop");
+    assert.equal(logged.permission.honor, false);
+  }),
+
+  test("pretool hook honors an active permission surface and still never allows", () => {
+    const stopPerm = decidePermission({
+      classId: "shell",
+      requestedMode: "active",
+      hasKey: true,
+      contentPresent: true,
+      label: "deny",
+      confidence: 0.9,
+      probabilities: { allow: 0.05, deny: 0.9, ask: 0.05 },
+    });
+    const denied = pretoolHookDecision({
+      mode: "shadow",
+      choice: "continue",
+      gate: "auto",
+      blocked: false,
+      pretool: { policyId: stopPerm.policyId },
+      permission: stopPerm,
+    });
+    assert.equal(denied.decision, "deny");
+    assert.notEqual(denied.decision, "allow");
+    assert.equal(denied.exitCode, 2);
+    assert.match(denied.reason, /choice=stop/);
+    assert.match(denied.reason, /policy=omapi-loop-stop-policy@1/);
+
+    const allowPerm = decidePermission({
+      classId: "shell",
+      requestedMode: "active",
+      hasKey: true,
+      contentPresent: true,
+      label: "allow",
+      confidence: 0.9,
+      probabilities: { allow: 0.8, deny: 0.1, ask: 0.1 },
+    });
+    const deferred = pretoolHookDecision({
+      mode: "shadow",
+      choice: "continue",
+      gate: "auto",
+      blocked: false,
+      permission: allowPerm,
+    });
+    assert.equal(deferred.decision, "defer");
+    assert.equal(deferred.reason, "exec");
+    assert.notEqual(deferred.decision, "allow");
+
+    const noOverride = pretoolHookDecision({
+      mode: "shadow",
+      choice: "stop",
+      gate: "hold",
+      blocked: false,
+      pretool: { policyId: "omapi-loop-stop-policy@1" },
+      permission: allowPerm,
+    });
+    assert.equal(noOverride.decision, "deny");
+    assert.match(noOverride.reason, /choice=stop/);
+
+    const shadowCatalog = pretoolHookDecision({
+      mode: "active",
+      choice: "continue",
+      gate: "auto",
+      blocked: false,
+      permission: { ...stopPerm, mode: "shadow", honor: false, blocked: false, choice: "unclassified" },
+    });
+    assert.equal(shadowCatalog.decision, "defer");
+    assert.equal(shadowCatalog.reason, "exec");
+
+    const bypass = permissionBypass("mcp");
+    assert.equal(bypass.skipped, true);
+    assert.equal(bypass.reason, "bypass");
+    assert.equal(bypass.blocked, false);
+    assert.equal(bypass.policyId, ROUTING_POLICY.version);
+    assert.equal(permissionBypass("web"), null);
+  }),
+
+  test("shadow permission spawn stays unblocked without a key", () => {
+    const bin = process.env.JEV_ROUTER_BIN;
+    if (!bin) return;
+    const shell = spawnSync(bin, ["--tool-name", "Bash", "--tool-input", "npm test", "probe intent"], {
+      env: {
+        ...process.env,
+        JEV_MODE: "shadow",
+        JEV_PERMISSION_MODE: "active",
+        JEV_BYPASS: "",
+        TYPESAFE_API_KEY: "",
+      },
+      encoding: "utf8",
+    });
+    assert.equal(shell.status, 0, shell.stderr);
+    const shellPayload = JSON.parse(shell.stdout.trim().split("\n").at(-1));
+    assert.equal(shellPayload.missingKey, true);
+    assert.equal(shellPayload.blocked, false);
+    assert.equal(shellPayload.permission.mode, "shadow");
+    assert.equal(shellPayload.permission.honor, false);
+    assert.equal(shellPayload.permission.missingKey, true);
+    assert.equal(shellPayload.permission.reason, "missing_key");
+    assert.equal(shellPayload.permission.policyId, "omapi-loop-stop-policy@1");
+    assert.equal(shellPayload.permission.autoAllow, false);
+    assert.equal(shellPayload.pretool.policyId, shellPayload.permission.policyId);
+
+    const write = spawnSync(bin, ["--tool-name", "Write", "--tool-input", ".env", "probe intent"], {
+      env: {
+        ...process.env,
+        JEV_MODE: "shadow",
+        JEV_PERMISSION_MODE: "active",
+        JEV_BYPASS: "",
+        TYPESAFE_API_KEY: "",
+      },
+      encoding: "utf8",
+    });
+    assert.equal(write.status, 0, write.stderr);
+    const writePayload = JSON.parse(write.stdout.trim().split("\n").at(-1));
+    assert.equal(writePayload.blocked, false);
+    assert.equal(writePayload.permission.mode, "shadow");
+    assert.equal(writePayload.permission.codeDeny, true);
+    assert.equal(writePayload.permission.mapped, "stop");
+    assert.equal(writePayload.permission.blocked, false);
+    assert.equal(writePayload.permission.policyId, "omapi-check-policy@1");
+    assert.equal(writePayload.choice, "unclassified");
   }),
 ];
 

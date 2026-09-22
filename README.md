@@ -95,8 +95,8 @@ nix build .#omapi-pinned
 | --- | --- |
 | **`omapi`** | Thin wrap of host `omp` / `$OMP_BIN`. Fail-closed if neither exists. |
 | **`omapi-pinned`** | Same wrap, targeting a fetchurl pin of [oh-my-pi v18.2.6](https://github.com/can1357/oh-my-pi/releases/tag/v18.2.6). Not omp source. |
-| **`jev-router`** | Node router: asks Typesafe Choice, prints a JSON verdict. Loop-stop (`continue` / `stop` / `escalate`) plus `jev-router --check` for a shadow diff check. |
-| **`cursor-agent-jev`** | Runs `jev-router`, then execs `cursor-agent` (`cursor-agent` must already be on `PATH`). Shadow never blocks; active honors continue/auto only. |
+| **`jev-router`** | Node router: asks Typesafe Choice, prints a JSON verdict. Loop-stop (`continue` / `stop` / `escalate`), `jev-router --check` for a shadow diff check, shadow permission catalogs, and a tiny tool catalog (`--catalog`, `--schema NAME`). |
+| **`cursor-agent-jev`** | Runs `jev-router`, then execs `cursor-agent` (`cursor-agent` must already be on `PATH`). Shadow never blocks; active honors continue/auto only. `--catalog` and `--schema` print and do not exec. |
 
 ## Jev
 
@@ -138,6 +138,19 @@ Grok Build `PreToolUse` uses the same three policy ids and the same `JEV_BYPASS`
 
 Shell, write, and MCP also get a permission catalog that wraps those same policy ids (`allow`→continue, `deny`→stop, `ask`→escalate or the writer parent). It defaults to shadow. `JEV_PERMISSION_MODE=active` honors it only after Marci re-COMPATs; `JEV_MODE=active` does not flip it. A missing `TYPESAFE_API_KEY` keeps that surface on shadow. How to run: [docs/SPIKE-permission.md](docs/SPIKE-permission.md).
 
+### Tool catalog
+
+Every GateVerdict carries a tiny tool index (`catalog.kind = tiny`): class, policy id, and tool names. It does not carry JSON Schema. The wrap copies that index into `JEV_TOOL_CATALOG` for the `cursor-agent` process.
+
+```sh
+jev-router --catalog
+cursor-agent-jev --schema Bash
+```
+
+`--schema` dumps one tool's schema and does not exec `cursor-agent`. A known tool is `decision: defer` (`autoAllow: false`). An unmapped name denies (exit 2). Neither path prints `{"decision":"allow"}`. How to run: [docs/SPIKE-catalog.md](docs/SPIKE-catalog.md). This index does not set `JEV_PERMISSION_MODE`.
+
+
+
 ## Skills
 
 Skills are a flake input — the sole source of truth. This repo ships `skills-stub` so the input is a valid omp skills tree (`*/SKILL.md`) on day one. The stub includes `bootstrap` and a shadow `check` skill (`jev-router --check`). Home Manager only symlinks that store path to `~/.config/omp/agent/skills`. When you have a real skills repo, change `inputs.skills.url` and the lock; do not copy a second `skills/` tree into this overlay.
@@ -163,6 +176,7 @@ If a future omp release drops a slice, `packages/omp-pin.nix` **throws** for tha
 - CI on this repo **runs** the `x86_64-linux` job; the other three matrix rows skip (no matching hosted runner).
 - `omapi-pinned` is opt-in (180–240 MB fetchurl).
 - Jev defaults to shadow. `jev-router --check` is the shadow diff check; empty findings are not approval. Loop-stop is shadow-first; active `stop`/`escalate` do not exec.
+- Tool catalog is a tiny always-on index of the existing policy ids. Full schema is `jev-router --schema NAME` and is not an allow. Permission catalogs stay shadow.
 - Skills ship as `skills-stub` until you swap the input URL.
 
 ## Contributing

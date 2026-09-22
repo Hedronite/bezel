@@ -23,6 +23,7 @@ both read it. There is no second verdict type.
 | `mode` | `shadow` (default), `active` | `JEV_MODE` |
 | `pretool` | stamp, only when a tool name/class was passed | The map below |
 | `permission` | shell / write / mcp only | Permission catalog. Shadow unless `JEV_PERMISSION_MODE=active` and a key is set |
+| `catalog` | tiny tool index, `kind: tiny` | Code, from `PRETOOL_CLASSES`. No schemas |
 
 `pretool` is `{ matched, class, policyId, choiceFamily, toolName, mismatch }`.
 It names which existing policy the tool class is accountable to. It does not
@@ -220,8 +221,33 @@ Only the literal `active` honors. `yes`, `true`, and `JEV_MODE=active` do not. U
 
 How to run: [SPIKE-permission.md](SPIKE-permission.md).
 
+## Tool catalog
+
+The same three policy ids, as a tiny index on every GateVerdict (`catalog`).
+`cursor-agent-jev` exports that index as `JEV_TOOL_CATALOG` when it execs,
+including under `JEV_BYPASS` (the gate is skipped; the index is not).
+
+Full JSON Schema is a separate call. It is not on the verdict and it is not
+an allow.
+
+| Path | Stdout | `cursor-agent` |
+| --- | --- | --- |
+| `jev-router --catalog` / `cursor-agent-jev --catalog` | `{ "kind": "tiny", "entries": […] }` | not exec'd |
+| `jev-router --schema NAME` / `cursor-agent-jev --schema NAME` | `{ "call": "schema-dump", … }` | not exec'd |
+
+A mapped tool dumps one schema with `decision: defer` and `autoAllow: false`.
+An unmapped name (`read_file`, `use_tool`) is `decision: deny`, `schema: null`,
+exit 2. `decision` is never `allow`.
+
+`buildGateState` puts the tiny index on the existing `systemOne` state and
+strips `TYPESAFE_API_KEY`. There is still one TypeSafe client. No new
+policyId. MCP dumps set `typedCall: false`. This index does not read
+`JEV_PERMISSION_MODE` and does not flip permission catalogs to active.
+
+How to run: [SPIKE-catalog.md](SPIKE-catalog.md).
+
 ## Out of scope
 
-MCP typed Calls (PR-C). A tiny follow-up catalog (PR-D). Bend2, sec-routing,
-batteries. A second TypeSafe client. Changing default `JEV_MODE` or default
-`JEV_PERMISSION_MODE` to `active`. Baking keys into the flake.
+MCP typed Calls (PR-C). Bend2, sec-routing, batteries. A second TypeSafe
+client. Changing default `JEV_MODE` or default `JEV_PERMISSION_MODE` to
+`active`. Baking keys into the flake.

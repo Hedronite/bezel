@@ -17,5 +17,6 @@ Shipped skills:
 | --- | --- |
 | `bootstrap` | Placeholder so the input is a valid skills directory (`*/SKILL.md`) |
 | `check` | Shadow Jev-first diff check (`jev-router --check`). Empty findings ≠ approval |
+| `laws` | Bend2 `LAWS.bend` for the bridle. The harness loads it. Bezel does not become the harness |
 
 See [docs/SPIKE-stanley.md](../docs/SPIKE-stanley.md).

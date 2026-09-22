@@ -1,9 +1,12 @@
 {
   lib,
-  stdenvNoCC,
+  stdenv,
   fetchurl,
   nodejs,
   makeWrapper,
+  rustc,
+  cargo,
+  git,
 }:
 
 # Router-only package: jev-router.mjs + published @typesafe-ai/sdk.
@@ -16,8 +19,9 @@ let
     url = "https://registry.npmjs.org/@typesafe-ai/sdk/-/sdk-0.6.0.tgz";
     hash = "sha512-IddX+Q0XM+VagOUZFeP7wZjaO4SHMdvnh2zEBdrZZnXedWI3BNK1lKhMx3ayrkFWvVLbVcUHJy6AVZlY+e6Jaw==";
   };
+  repoRoot = ../..;
 in
-stdenvNoCC.mkDerivation {
+stdenv.mkDerivation {
   pname = "jev-router";
   version = "0.1.0";
   src = ./.;
@@ -25,13 +29,38 @@ stdenvNoCC.mkDerivation {
   nativeBuildInputs = [
     makeWrapper
     nodejs
+    rustc
+    cargo
+    git
   ];
 
   dontConfigure = true;
-  dontBuild = true;
+
+  buildPhase = ''
+    runHook preBuild
+    export BEVEL_JS=$PWD
+    export CARGO_HOME=$TMPDIR/cargo-home
+    export HOME=$TMPDIR/home
+    mkdir -p "$CARGO_HOME" "$HOME"
+    work=$TMPDIR/bridle
+    mkdir -p "$work/crates/bezel-bridle" "$work/packages/jev-router" "$work/skills-stub"
+    cp ${repoRoot}/crates/bezel-bridle/Cargo.toml ${repoRoot}/crates/bezel-bridle/Cargo.lock "$work/crates/bezel-bridle/"
+    cp -r ${repoRoot}/crates/bezel-bridle/src "$work/crates/bezel-bridle/src"
+    cp -r ${repoRoot}/packages/jev-router/testdata "$work/packages/jev-router/testdata"
+    cp -r ${repoRoot}/skills-stub/laws "$work/skills-stub/laws"
+    chmod -R u+w "$work"
+    echo "bezel-bridle oracle fixtures"
+    export CARGO_TARGET_DIR=$work/target
+    cargo test --manifest-path "$work/crates/bezel-bridle/Cargo.toml" --offline --release
+    cargo build --manifest-path "$work/crates/bezel-bridle/Cargo.toml" --offline --release
+    export BRIDLE_BIN=$CARGO_TARGET_DIR/release/bezel-bridle
+    test -x "$BRIDLE_BIN"
+    runHook postBuild
+  '';
 
   installPhase = ''
     runHook preInstall
+    cd "$BEVEL_JS"
 
     mkdir -p $out/lib/jev-router/node_modules/@typesafe-ai/sdk
     cp jev-router.mjs policy.mjs facts.mjs check.mjs loop-stop.mjs permission.mjs catalog.mjs calls.mjs harness.mjs package.json $out/lib/jev-router/
@@ -43,6 +72,15 @@ stdenvNoCC.mkDerivation {
       --add-flags "$out/lib/jev-router/jev-router.mjs" \
       --prefix NODE_PATH : "$out/lib/jev-router/node_modules"
     # Secrets: never --set TYPESAFE_API_KEY / getEnv at build.
+    install -m 755 "$BRIDLE_BIN" $out/bin/bezel-bridle
+    if head -c 80 "$out/bin/bezel-bridle" | grep -q node; then
+      echo "bezel-bridle must be the Rust binary" >&2
+      exit 1
+    fi
+    empty=$(mktemp)
+    "$out/bin/bezel-bridle" --check --diff-file ${repoRoot}/packages/jev-router/testdata/empty.diff >"$empty"
+    grep -q '"approval":false' "$empty"
+    grep -q '"status":"no_diff"' "$empty"
 
     runHook postInstall
   '';

@@ -470,7 +470,7 @@
             hook_out="$(mktemp)"
             hook_err="$(mktemp)"
             : | JEV_MODE=shadow JEV_BYPASS= "$bin" hook >"$hook_out" 2>"$hook_err"
-            echo "$hook_out" | jq -e '.decision == "defer"'
+            jq -e '.decision == "defer"' <"$hook_out"
             if grep -F 'oma on' "$hook_out" "$hook_err" || grep -F 'omapi-mark' "$hook_out" "$hook_err"; then
               echo "grok-build-jev hook printed a splash" >&2
               exit 1

@@ -579,6 +579,74 @@ mod tests {
         assert_eq!(shadow_empty.choice, "unclassified");
     }
 
+    fn shell_hook(mode: &str, verdict: &PermissionVerdict) -> String {
+        let hook = hook_of(mode, "continue", "auto", false, verdict);
+        assert_ne!(hook.decision, "allow");
+        format!(
+            r#"{{"action":"{}","exitCode":{},"decision":"{}","reason":"{}"}}"#,
+            if hook.decision == "deny" { "deny" } else { "defer" },
+            hook.exit_code,
+            hook.decision,
+            hook.reason,
+        )
+    }
+
+    #[test]
+    fn g3_shell_asks_without_content_and_under_the_loop_stop_bars() {
+        assert_eq!(LOOP_STOP_MIN_CONFIDENCE, 0.6);
+        assert_eq!(LOOP_STOP_MIN_PROBABILITY, 0.55);
+        assert_eq!(LOOP_STOP_MIN_MARGIN, 0.15);
+
+        let no_content = decide_permission(&permission_input(
+            "shell", "active", true, false, Some("allow"), 0.9, 0.8, 0.1, 0.1, "",
+        ))
+        .unwrap();
+        assert_permission("shell-no-content.json", &no_content);
+        assert_eq!(no_content.choice, "escalate");
+        assert_ne!(no_content.choice, "continue");
+        assert!(no_content.json.contains("\"reason\":\"no_content\""));
+        assert_eq!(shell_hook("active", &no_content), permission_golden("shell-no-content-hook.json"));
+
+        let at_bars = decide_permission(&permission_input(
+            "shell", "active", true, true, Some("allow"), 0.6, 0.55, 0.4, 0.05, "",
+        ))
+        .unwrap();
+        assert_permission("shell-at-bars.json", &at_bars);
+        assert_eq!(at_bars.choice, "continue");
+        assert_eq!(at_bars.json.contains("\"reason\":\"selected\""), true);
+        assert_eq!(shell_hook("shadow", &at_bars), permission_golden("shell-at-bars-hook.json"));
+
+        let under = decide_permission(&permission_input(
+            "shell", "active", true, true, Some("allow"), 0.4, 0.4, 0.35, 0.25, "",
+        ))
+        .unwrap();
+        assert_permission("shell-under-bars.json", &under);
+        assert_eq!(under.choice, "escalate");
+        assert_ne!(under.choice, "continue");
+        assert!(under.json.contains("\"reason\":\"model_uncertain\""));
+        assert_eq!(shell_hook("active", &under), permission_golden("shell-under-bars-hook.json"));
+
+        let abstain = decide_permission(&permission_input(
+            "shell", "active", true, true, Some("cannot_tell"), 0.9, 0.1, 0.0, 0.0, "",
+        ))
+        .unwrap();
+        assert_permission("shell-cannot-tell.json", &abstain);
+        assert_eq!(abstain.choice, "escalate");
+        assert_ne!(abstain.choice, "continue");
+        assert!(abstain.json.contains("\"reason\":\"cannot_tell\""));
+        assert_eq!(shell_hook("active", &abstain), permission_golden("shell-cannot-tell-hook.json"));
+
+        let ask = decide_permission(&permission_input(
+            "shell", "active", true, true, Some("ask"), 0.2, 0.2, 0.2, 0.6, "",
+        ))
+        .unwrap();
+        assert_permission("shell-ask-under-bars.json", &ask);
+        assert_eq!(ask.choice, "escalate");
+        assert!(ask.hitl);
+        assert_ne!(ask.choice, "continue");
+        assert!(!ask.json.contains("\"decision\":\"allow\""));
+    }
+
     #[test]
     fn loop_stop_subthreshold_does_not_continue() {
         assert_eq!(LOOP_STOP_MIN_CONFIDENCE, 0.6);

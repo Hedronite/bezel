@@ -237,7 +237,7 @@ mod tests {
         deny_p: f64,
         ask_p: f64,
         path: &'static str,
-    ) -> PermissionInput {
+    ) -> PermissionInput<'static> {
         PermissionInput {
             class_id,
             requested_mode,
@@ -249,6 +249,9 @@ mod tests {
             deny_p,
             ask_p,
             path,
+            diff: "",
+            concern: None,
+            flags: None,
         }
     }
 
@@ -439,6 +442,141 @@ mod tests {
         assert_eq!(honoring.decision, "defer");
         assert_eq!(honoring.reason, "exec");
         assert_ne!(honoring.decision, "allow");
+    }
+
+    fn write_input<'a>(
+        requested_mode: &'static str,
+        label: Option<&'static str>,
+        path: &'a str,
+        diff: &'a str,
+        concern: Option<f64>,
+    ) -> PermissionInput<'a> {
+        PermissionInput {
+            class_id: "write",
+            requested_mode,
+            has_key: true,
+            content_present: false,
+            label,
+            confidence: 0.0,
+            allow_p: 0.0,
+            deny_p: 0.0,
+            ask_p: 0.0,
+            path,
+            diff,
+            concern,
+            flags: None,
+        }
+    }
+
+    fn hook_of(mode: &str, choice: &str, gate: &str, blocked: bool, verdict: &PermissionVerdict) -> crate::policy::HookOut {
+        pretool_hook_decision(&GateVerdict {
+            bypass: false,
+            mode: mode.to_string(),
+            choice: Some(choice.to_string()),
+            gate: Some(gate.to_string()),
+            blocked,
+            policy_id: String::new(),
+            permission: Some(SurfaceVerdict {
+                honor: verdict.honor,
+                mode: verdict.mode.to_string(),
+                choice: verdict.choice.to_string(),
+                gate: verdict.gate.to_string(),
+                blocked: verdict.blocked,
+                policy_id: verdict.policy_id.to_string(),
+            }),
+            calls: None,
+        })
+    }
+
+    #[test]
+    fn g2_write_flags_beat_allow_and_empty_findings_are_not_approval() {
+        let docs = "diff --git a/notes/a.md b/notes/a.md\n--- a/notes/a.md\n+++ b/notes/a.md\n@@\n-old\n+new paragraph";
+        let deleted = "diff --git a/src/math.test.js b/src/math.test.js\ndeleted file mode 100644\nindex 1111111..0000000\n--- a/src/math.test.js\n+++ /dev/null\n@@ -1 +0,0 @@\n-const value = 1;";
+        let skip = testdata("skip-marker.diff");
+        let assertions = testdata("assertions-removed.diff");
+
+        let secret = write_input("active", Some("allow"), ".env", docs, Some(0.2));
+        let stopped = decide_permission(&secret).unwrap();
+        assert_permission("write-secret-path.json", &stopped);
+        assert_eq!(stopped.choice, "stop");
+        assert!(stopped.json.contains("\"modelLabel\":\"allow\""));
+        assert!(stopped.json.contains("\"reason\":\"secret_path\""));
+        assert_ne!(hook_of("active", "continue", "auto", false, &stopped).decision, "allow");
+
+        let skip_in = write_input("active", Some("allow"), "", &skip, Some(0.2));
+        assert_permission("write-skip-marker.json", &decide_permission(&skip_in).unwrap());
+        let assert_in = write_input("active", Some("allow"), "", &assertions, Some(0.2));
+        assert_permission("write-assertions-removed.json", &decide_permission(&assert_in).unwrap());
+        let deleted_in = write_input("active", Some("allow"), "", deleted, Some(0.2));
+        let deleted_verdict = decide_permission(&deleted_in).unwrap();
+        assert_permission("write-test-file-deleted.json", &deleted_verdict);
+        assert!(deleted_verdict.json.contains("\"codeDeny\":true"));
+        assert!(!deleted_verdict.json.contains("F454"));
+
+        let below = decide_permission(&write_input("active", Some("allow"), "notes/a.md", docs, Some(0.2))).unwrap();
+        assert_permission("write-below-park.json", &below);
+        assert_eq!(below.choice, "continue");
+        assert!(below.json.contains("\"reason\":\"below_park\""));
+        let zero = decide_permission(&write_input("active", Some("allow"), "notes/a.md", docs, Some(0.0))).unwrap();
+        assert_permission("write-below-park-zero.json", &zero);
+        let below_plain = decide_permission(&write_input("active", None, "notes/a.md", docs, Some(0.2))).unwrap();
+        assert_eq!(below_plain.choice, "continue");
+        assert!(below_plain.json.contains("\"modelLabel\":null"));
+        let kept = apply_permission_verdict(
+            PermissionParent {
+                choice: "stop",
+                gate: "hold",
+                blocked: true,
+                exec: false,
+                hitl: Some(false),
+                mode: "active",
+            },
+            &below_plain,
+        );
+        assert_eq!(kept, permission_golden("write-below-park-keeps-stop.json"));
+        assert!(kept.contains("\"choice\":\"stop\""));
+        let kept_hook = hook_of("active", "stop", "hold", true, &below_plain);
+        assert_eq!(kept_hook.decision, "deny");
+        assert_ne!(kept_hook.decision, "allow");
+        assert_eq!(
+            format!(
+                r#"{{"action":"deny","exitCode":2,"decision":"deny","reason":"{}"}}"#,
+                kept_hook.reason
+            ),
+            permission_golden("write-below-park-keeps-stop-hook.json")
+        );
+
+        let at_bar = decide_permission(&write_input("active", Some("allow"), "notes/a.md", docs, Some(0.4))).unwrap();
+        assert_permission("write-at-park.json", &at_bar);
+        assert_ne!(at_bar.choice, "continue");
+        let absent = decide_permission(&write_input("active", Some("allow"), "notes/a.md", docs, None)).unwrap();
+        assert_ne!(absent.choice, "continue");
+        assert!(absent.json.contains("\"reason\":\"empty_findings_not_approval\""));
+        let nan = decide_permission(&write_input("active", Some("allow"), "src/app.js", "", Some(f64::NAN))).unwrap();
+        assert_ne!(nan.choice, "continue");
+
+        let empty = decide_permission(&write_input("active", Some("allow"), "src/app.js", "", None)).unwrap();
+        assert_permission("write-empty.json", &empty);
+        assert!(empty.json.contains("\"reason\":\"empty_findings_not_approval\""));
+        assert!(empty.json.contains("\"mapped\":\"writer\""));
+        assert_ne!(empty.choice, "continue");
+        let empty_hook = hook_of("active", "continue", "auto", false, &empty);
+        assert_eq!(empty_hook.decision, "deny");
+        assert_ne!(empty_hook.decision, "allow");
+        assert_eq!(
+            format!(
+                r#"{{"action":"deny","exitCode":2,"decision":"deny","reason":"{}"}}"#,
+                empty_hook.reason
+            ),
+            permission_golden("write-empty-hook.json")
+        );
+        assert!(!empty.json.contains("\"approval\":true"));
+
+        let shadow_empty = decide_permission(&write_input("shadow", None, "src/app.js", "", None)).unwrap();
+        assert_permission("write-shadow-empty.json", &shadow_empty);
+        assert!(!shadow_empty.honor);
+        assert!(!shadow_empty.blocked);
+        assert_eq!(shadow_empty.choice, "unclassified");
     }
 
     #[test]

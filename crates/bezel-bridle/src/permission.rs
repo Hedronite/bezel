@@ -59,7 +59,7 @@ fn concern_under_park(concern: Option<f64>) -> bool {
 /// One permission input. Mode comes from `requested_mode` and `has_key`.
 /// This surface does not read another mode.
 #[derive(Clone, Copy)]
-pub struct PermissionInput {
+pub struct PermissionInput<'a> {
     pub class_id: &'static str,
     pub requested_mode: &'static str,
     pub has_key: bool,
@@ -69,7 +69,11 @@ pub struct PermissionInput {
     pub allow_p: f64,
     pub deny_p: f64,
     pub ask_p: f64,
-    pub path: &'static str,
+    pub path: &'a str,
+    pub diff: &'a str,
+    pub concern: Option<f64>,
+    /// `None` collects flags from `diff` and `path`. `Some` is the caller's list.
+    pub flags: Option<&'a [&'a str]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -103,13 +107,14 @@ struct Surface {
     new_catalog: bool,
 }
 
-/// `decidePermission` for the surface and mode step.
+/// `decidePermission` for the surface, mode, and write steps.
 /// A class other than shell, write, or mcp is `None` (`null`).
-/// Keyed write and keyed mcp routing stay on later steps.
-pub fn decide_permission(input: &PermissionInput) -> Option<PermissionVerdict> {
+/// Keyed mcp routing stays on a later step.
+pub fn decide_permission(input: &PermissionInput<'_>) -> Option<PermissionVerdict> {
     let surface = surface(input.class_id)?;
     let mode = effective_mode(input.requested_mode, input.has_key);
-    let deny = write_deny_flag(surface.id, input.path);
+    let flags = write_flag_list(input);
+    let deny = deny_flag(surface.id, &flags);
     if !input.has_key {
         return Some(if let Some(flag) = deny {
             pack(
@@ -128,6 +133,9 @@ pub fn decide_permission(input: &PermissionInput) -> Option<PermissionVerdict> {
     }
     if surface.id == "shell" {
         return Some(shell_from_label(surface, mode, input));
+    }
+    if surface.id == "write" {
+        return Some(write_decision(surface, mode, input, &flags));
     }
     None
 }
@@ -192,15 +200,79 @@ fn surface(class_id: &str) -> Option<Surface> {
     }
 }
 
-fn write_deny_flag(class_id: &str, path: &str) -> Option<&'static str> {
-    if class_id == "write" && crate::check::file_kind(path) == "secret" {
-        Some("secret_path")
+fn write_flag_list(input: &PermissionInput<'_>) -> Vec<String> {
+    if input.class_id != "write" {
+        return Vec::new();
+    }
+    if let Some(flags) = input.flags {
+        return flags.iter().map(|flag| (*flag).to_string()).collect();
+    }
+    crate::check::write_flags(input.diff, input.path)
+}
+
+fn deny_flag(class_id: &str, flags: &[String]) -> Option<&'static str> {
+    if class_id != "write" {
+        return None;
+    }
+    crate::policy::WRITE_CODE_DENY_FLAGS
+        .iter()
+        .copied()
+        .find(|flag| flags.iter().any(|got| got == flag))
+}
+
+fn write_decision(
+    surface: Surface,
+    mode: &'static str,
+    input: &PermissionInput<'_>,
+    flags: &[String],
+) -> PermissionVerdict {
+    if let Some(flag) = deny_flag(surface.id, flags) {
+        return pack(
+            surface,
+            mode,
+            Some("stop"),
+            Some("deny"),
+            input.label,
+            flag,
+            true,
+            false,
+        );
+    }
+    if concern_under_park(input.concern) {
+        return pack(
+            surface,
+            mode,
+            Some("continue"),
+            Some("allow"),
+            input.label,
+            "below_park",
+            false,
+            false,
+        );
+    }
+    let reason = if flags.is_empty() {
+        "empty_findings_not_approval"
     } else {
-        None
+        "writer_parent"
+    };
+    pack(surface, mode, Some("writer"), Some("ask"), input.label, reason, false, false)
+}
+
+fn hold_question(reason: &str, choice: &str) -> &'static str {
+    match reason {
+        "secret_path" => "Is this secret path intentional?",
+        "skip_marker_added" => "Should this test stay skipped?",
+        "assertions_removed" => "Should these assertions be removed?",
+        "test_file_deleted" => "Should this test file be deleted?",
+        "empty_findings_not_approval" => "Is this write in scope to continue?",
+        "no_content" => "What command should run?",
+        "missing_key" => "Is the judge available for this action?",
+        _ if choice == "stop" => "Should this action stop?",
+        _ => "Should a human review this before it continues?",
     }
 }
 
-fn shell_from_label(surface: Surface, mode: &'static str, input: &PermissionInput) -> PermissionVerdict {
+fn shell_from_label(surface: Surface, mode: &'static str, input: &PermissionInput<'_>) -> PermissionVerdict {
     if !input.content_present {
         return pack(
             surface,
@@ -299,7 +371,7 @@ fn pack(
         ("escalate", "hold", true, false, true)
     };
     let json = format!(
-        r#"{{"surface":"{id}","policyId":"{policy}","parent":"{parent}","catalog":"{catalog}","newCatalog":{new_catalog},"mode":"{mode}","honor":{honor},"shadow":{shadow},"blocked":{blocked},"exec":{exec},"hitl":{hitl},"choice":"{choice}","gate":"{gate}","label":{label},"modelLabel":{model_label},"mapped":{mapped},"reason":"{reason}","codeDeny":{code_deny},"skipped":false,"missingKey":{missing_key},"autoAllow":false}}"#,
+        r#"{{"surface":"{id}","policyId":"{policy}","parent":"{parent}","catalog":"{catalog}","newCatalog":{new_catalog},"mode":"{mode}","honor":{honor},"shadow":{shadow},"blocked":{blocked},"exec":{exec},"hitl":{hitl},"choice":"{choice}","gate":"{gate}","label":{label},"modelLabel":{model_label},"mapped":{mapped},"reason":"{reason}","codeDeny":{code_deny},"skipped":false,"missingKey":{missing_key},"autoAllow":false{hold}}}"#,
         id = surface.id,
         policy = surface.policy_id,
         parent = surface.parent,
@@ -315,6 +387,7 @@ fn pack(
         mapped = json_opt(mapped),
         code_deny = jbool(code_deny),
         missing_key = jbool(missing_key),
+        hold = hold_suffix(gate, choice, reason),
     );
     PermissionVerdict {
         json,
@@ -327,6 +400,14 @@ fn pack(
         policy_id: surface.policy_id,
         auto_allow: false,
     }
+}
+
+fn hold_suffix(gate: &str, choice: &str, reason: &str) -> String {
+    if gate != "hold" && choice != "stop" && choice != "escalate" {
+        return String::new();
+    }
+    let question = hold_question(reason, choice);
+    format!(r#","detail":"{reason}","question":"{question}","hold":"detail={reason} question={question}""#)
 }
 
 fn json_opt(value: Option<&str>) -> String {

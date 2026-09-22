@@ -599,7 +599,7 @@ const askCalls =
 try {
   const questions = {
     route: choice("Which writer lane should handle `intent`?", {
-      cursor_default: "Default Cursor/omp writer (Kimi/GLM via host Cursor auth)",
+      cursor_default: "Default writer for the calling harness (host Cursor auth)",
       hold_for_human: "Needs a human before any writer runs",
       other: "None of the listed lanes",
     }),

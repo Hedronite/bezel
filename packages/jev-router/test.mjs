@@ -794,6 +794,64 @@ const cases = [
     assert.equal(wrap.includes("--catalog"), true);
     assert.equal(wrap.includes("JEV_TOOL_CATALOG"), true);
     assert.equal(/--set(=|\s)TYPESAFE_API_KEY/.test(wrap), false);
+    assert.equal(wrap.includes("shadow Choice logged"), false);
+    assert.equal(wrap.includes("JEV_BYPASS — skipping"), false);
+    assert.equal(wrap.includes("cursor-agent-jev: verdict"), false);
+    assert.equal(wrap.includes("stop/escalate do not exec"), true);
+  }),
+
+  test("route prompt does not name omp as the writer", () => {
+    const src = readFileSync(join(here, "jev-router.mjs"), "utf8");
+    assert.equal(src.includes("Cursor/omp writer"), false);
+    assert.equal(src.includes('cursor_default: "Default writer for the calling harness (host Cursor auth)"'), true);
+  }),
+
+  test("planes shim does not print a launch banner", () => {
+    const shim = join(here, "..", "omapi-planes-shim.sh");
+    if (!existsSync(shim)) return;
+    const text = readFileSync(shim, "utf8");
+    assert.equal(text.includes("PLANES filter on"), false);
+  }),
+
+  test("router query and shadow launch stdout is one JSON object", () => {
+    const env = {
+      ...process.env,
+      JEV_MODE: "shadow",
+      JEV_BYPASS: "",
+      TYPESAFE_API_KEY: "",
+    };
+    // The flake check exports JEV_ROUTER_BIN (NODE_PATH is set on that wrap).
+    // A raw `node jev-router.mjs` only works when node_modules is installed.
+    function spawnRouter(args) {
+      const bin = process.env.JEV_ROUTER_BIN;
+      if (bin) return spawnSync(bin, args, { env, encoding: "utf8" });
+      return spawnSync(process.execPath, [join(here, "jev-router.mjs"), ...args], { env, encoding: "utf8" });
+    }
+    function oneJson(result) {
+      assert.equal(result.stdout.endsWith("\n"), true, result.stdout);
+      const body = result.stdout.slice(0, -1);
+      assert.equal(body.includes("\n"), false, result.stdout);
+      assert.equal(body.includes("[jev-router]"), false);
+      assert.equal(body.includes("PLANES filter on"), false);
+      return JSON.parse(body);
+    }
+
+    const catalog = spawnRouter(["--catalog"]);
+    assert.equal(catalog.status, 0, catalog.stderr);
+    assert.equal(catalog.stderr, "");
+    assert.equal(oneJson(catalog).kind, "tiny");
+
+    const schema = spawnRouter(["--schema", "Bash"]);
+    assert.equal(schema.status, 0, schema.stderr);
+    assert.equal(schema.stderr, "");
+    assert.equal(oneJson(schema).decision, "defer");
+
+    const shadow = spawnRouter(["probe intent"]);
+    assert.equal(shadow.status, 0, shadow.stderr);
+    const verdict = oneJson(shadow);
+    assert.equal(verdict.missingKey, true);
+    assert.equal(verdict.blocked, false);
+    assert.equal(shadow.stdout.includes("[jev-router]"), false);
   }),
 
   test("--catalog and --schema do not call Jev and do not print the key", () => {

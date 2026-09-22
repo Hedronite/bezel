@@ -304,6 +304,21 @@ variable to return to shadow. This is not set in the flake.
 
 How to run: [SPIKE-calls.md](SPIKE-calls.md).
 
+## Grok Build harness
+
+`grok-build-jev` is the PreToolUse entrypoint for the controls on this page.
+It calls `jev-router` and maps the GateVerdict with `pretoolHookDecision`.
+It does not construct a TypeSafe client and it does not keep a second class
+map. `grok-build-jev config` prints one hook group whose `matcher` is
+`PRETOOL_MATCHER`. The printed document does not set `JEV_MODE`,
+`JEV_PERMISSION_MODE`, `JEV_TYPED_CALL_MODE`, or `TYPESAFE_API_KEY`.
+
+`JEV_BYPASS` stays the one kill switch. The harness does not flip any mode
+to `active`. Installing the printed config on a Grok host is an operator
+step. This repository does not write that host config.
+
+How to run: [GROK-BUILD.md](GROK-BUILD.md).
+
 ## Out of scope
 
 Bend2, sec-routing, batteries. A second TypeSafe client. Changing default

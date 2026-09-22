@@ -61,6 +61,7 @@
         cursor-agent-jev = final.callPackage ./packages/cursor-agent-jev.nix {
           jev-router = final.jev-router;
         };
+        grok-build-jev = final.callPackage ./packages/grok-build-jev.nix { };
       };
 
       packages = forAllSystems (
@@ -74,6 +75,7 @@
             omapi-pinned
             jev-router
             cursor-agent-jev
+            grok-build-jev
             omp-runtime
             omp-pin
             ;
@@ -94,6 +96,10 @@
           type = "app";
           program = lib.getExe self.packages.${system}.cursor-agent-jev;
         };
+        grok-build-jev = {
+          type = "app";
+          program = lib.getExe self.packages.${system}.grok-build-jev;
+        };
       });
 
       homeManagerModules.default = import ./modules/home-manager.nix { inherit skills; };
@@ -109,6 +115,7 @@
           omapi = self.packages.${system}.omapi;
           jev-router = self.packages.${system}.jev-router;
           cursor-agent-jev = self.packages.${system}.cursor-agent-jev;
+          grok-build-jev = self.packages.${system}.grok-build-jev;
 
           omapi-wrap-contract = pkgs.runCommand "omapi-wrap-contract" { } ''
             set -eu
@@ -162,6 +169,7 @@
             set -eu
             cp -r ${./packages/jev-router}/. .
             cp ${./docs/POLICY-MAP.md} ./POLICY-MAP.md
+            cp ${./docs/GROK-BUILD.md} ./GROK-BUILD.md
             cp ${./packages/cursor-agent-jev.nix} ./cursor-agent-jev.nix
             JEV_ROUTER_BIN="${lib.getExe self.packages.${system}.jev-router}" node test.mjs
             echo ok >"$out"
@@ -349,6 +357,122 @@
             grep -q 'omapi-route-workflow-policy@1' "$AGENT_LOG"
             if grep -F '$schema' "$AGENT_LOG" >/dev/null; then
               echo "bypass catalog must stay tiny" >&2
+              exit 1
+            fi
+
+            echo ok >"$out"
+          '';
+
+          # Packaged harness: class → policy id, tiny catalog, FACET call,
+          # permission shadow vs active. No live Jev and no API key.
+          grok-build-harness = pkgs.runCommand "grok-build-harness" { nativeBuildInputs = [ pkgs.jq ]; } ''
+            set -eu
+            bin="${lib.getExe self.packages.${system}.grok-build-jev}"
+
+            smoke="$("$bin" smoke)"
+            echo "$smoke" | jq -e '.ok == true'
+            echo "$smoke" | jq -e '.pretool.class == "shell" and .pretool.matched == true and .pretool.policyId == "omapi-loop-stop-policy@1"'
+            echo "$smoke" | jq -e '[.classes[].policyId] | unique | sort == ["omapi-check-policy@1","omapi-loop-stop-policy@1","omapi-route-workflow-policy@1"]'
+            echo "$smoke" | jq -e '.catalog.kind == "tiny" and .catalog.schemaInline == false and .catalog.bytes < 900'
+            echo "$smoke" | jq -e '.schemaDump.decision == "defer" and .schemaDump.typedCall == false and .schemaDump.autoAllow == false'
+            echo "$smoke" | jq -e '.calls.transport == "facet" and .calls.op == "tool_call" and .calls.initiated == false and .calls.autoAllow == false and .calls.policyId == "omapi-route-workflow-policy@1"'
+            echo "$smoke" | jq -e '.permission.shadow.decision == "defer" and .permission.shadow.honor == false and .permission.shadow.blocked == false'
+            echo "$smoke" | jq -e '.permission.active.decision == "deny" and .permission.active.honor == true and .permission.active.blocked == true'
+            echo "$smoke" | jq -e '.permission.uncertain.decision == "deny"'
+            echo "$smoke" | jq -e '.permission.emptyFindings.reason == "empty_findings_not_approval" and .permission.emptyFindings.decision == "deny" and .permission.emptyFindings.approval == false'
+            echo "$smoke" | jq -e '.permission.keyAbsent.mode == "shadow" and .permission.keyAbsent.honor == false and .permission.keyAbsent.blocked == false'
+            echo "$smoke" | jq -e '.bypass.decision == "defer" and .bypass.reason == "bypass"'
+            echo "$smoke" | jq -e '.notBypass.decision == "deny"'
+            echo "$smoke" | jq -e '.irreversible.decision == "deny" and .irreversible.code == "F454" and .irreversible.initiated == false and .irreversible.autoPromote == false'
+            echo "$smoke" | jq -e '.uncertainActive.decision == "deny" and .uncertainShadow.decision == "defer"'
+            echo "$smoke" | jq -e '.readStaysDefer.decision == "defer" and .loopStopWins.decision == "deny"'
+            echo "$smoke" | jq -e '.unmapped.decision == "defer" and .unmapped.reason == "unmatched"'
+            if echo "$smoke" | grep -F '"decision":"allow"' >/dev/null; then
+              echo "smoke must not allow" >&2
+              exit 1
+            fi
+
+            cfg="$("$bin" config)"
+            echo "$cfg" | jq -e '.hooks.PreToolUse | length == 1'
+            echo "$cfg" | jq -e '.hooks.PreToolUse[0].hooks[0].command == "grok-build-jev hook"'
+            if echo "$cfg" | grep -E 'TYPESAFE_API_KEY|JEV_MODE|JEV_PERMISSION_MODE|JEV_TYPED_CALL_MODE' >/dev/null; then
+              echo "config must not set a mode or a key" >&2
+              exit 1
+            fi
+
+            work="$(mktemp -d)"
+            cat >"$work/router" <<'EOS'
+            #!/bin/sh
+            if [ "''${HARNESS_MARK:-}" = "poison" ]; then
+              : > "''${HARNESS_CALLED_FILE:?}"
+              exit 99
+            fi
+            printf '%s\n' "$*" > "''${HARNESS_ARGV_LOG:-/dev/null}"
+            printf '%s\n' '{"ok":true,"mode":"active","choice":"stop","gate":"hold","blocked":true,"exec":false,"bypass":false}'
+            EOS
+            chmod +x "$work/router"
+            event='{"hookEventName":"PreToolUse","toolName":"Bash","toolInput":{"command":"npm test"}}'
+
+            export HARNESS_ARGV_LOG="$work/argv"
+            : >"$HARNESS_ARGV_LOG"
+            set +e
+            hook="$(printf '%s' "$event" | JEV_ROUTER="$work/router" JEV_BYPASS= JEV_MODE=active "$bin" hook)"
+            rc=$?
+            set -e
+            test "$rc" -eq 2
+            echo "$hook" | jq -e '.decision == "deny" and (.reason | contains("policy=omapi-loop-stop-policy@1"))'
+            grep -q -- '--tool-name' "$HARNESS_ARGV_LOG"
+            grep -q Bash "$HARNESS_ARGV_LOG"
+            grep -q -- '--tool-input' "$HARNESS_ARGV_LOG"
+            grep -q 'npm test' "$HARNESS_ARGV_LOG"
+
+            rm -f "$work/called"
+            set +e
+            byp="$(printf '%s' "$event" | JEV_ROUTER="$work/router" HARNESS_MARK=poison HARNESS_CALLED_FILE="$work/called" JEV_BYPASS=1 "$bin" hook)"
+            rc=$?
+            set -e
+            test "$rc" -eq 0
+            echo "$byp" | jq -e '.decision == "defer" and .reason == "bypass"'
+            if [ -e "$work/called" ]; then
+              echo "bypass must not call the router" >&2
+              exit 1
+            fi
+
+            cat >"$work/garbage" <<'EOS'
+            #!/bin/sh
+            printf '%s\n' 'not-json'
+            EOS
+            chmod +x "$work/garbage"
+            set +e
+            garbage="$(printf '%s' "$event" | JEV_ROUTER="$work/garbage" JEV_BYPASS= JEV_MODE=active "$bin" hook)"
+            rc=$?
+            set -e
+            test "$rc" -eq 2
+            echo "$garbage" | jq -e '.decision == "deny" and .reason == "jev uncertain"'
+
+            set +e
+            soft="$(printf '%s' "$event" | JEV_ROUTER="$work/garbage" JEV_BYPASS= JEV_MODE=shadow "$bin" hook)"
+            rc=$?
+            set -e
+            test "$rc" -eq 0
+            echo "$soft" | jq -e '.decision == "defer" and .reason == "shadow"'
+
+            # Interactive entry is quiet. No banner on stdout or stderr.
+            cat_out="$(mktemp)"
+            cat_err="$(mktemp)"
+            "$bin" catalog >"$cat_out" 2>"$cat_err"
+            test ! -s "$cat_err"
+            jq -e '.kind == "tiny"' <"$cat_out" >/dev/null
+            if grep -F 'oma on' "$cat_out" "$cat_err" || grep -F 'omapi-mark' "$cat_out" "$cat_err"; then
+              echo "grok-build-jev catalog printed a splash" >&2
+              exit 1
+            fi
+            hook_out="$(mktemp)"
+            hook_err="$(mktemp)"
+            : | JEV_MODE=shadow JEV_BYPASS= "$bin" hook >"$hook_out" 2>"$hook_err"
+            jq -e '.decision == "defer"' <"$hook_out"
+            if grep -F 'oma on' "$hook_out" "$hook_err" || grep -F 'omapi-mark' "$hook_out" "$hook_err"; then
+              echo "grok-build-jev hook printed a splash" >&2
               exit 1
             fi
 

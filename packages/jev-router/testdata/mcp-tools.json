@@ -1,0 +1,25 @@
+{
+  "interface": "Mcp",
+  "tools": [
+    {
+      "name": "linear__list_issues",
+      "description": "List issues for a team",
+      "effect": "read",
+      "args": [
+        {
+          "name": "team",
+          "question": "Which team should the issues come from?",
+          "stated": "Does the intent name a team?",
+          "optional": true,
+          "options": { "eng": "Engineering", "ops": "Operations" }
+        }
+      ]
+    },
+    {
+      "name": "linear__save_issue",
+      "description": "Create or update an issue",
+      "effect": "write",
+      "args": []
+    }
+  ]
+}

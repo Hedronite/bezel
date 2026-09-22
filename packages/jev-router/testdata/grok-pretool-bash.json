@@ -1,0 +1,8 @@
+{
+  "hookEventName": "PreToolUse",
+  "sessionId": "fixture",
+  "cwd": "/tmp/fixture",
+  "workspaceRoot": "/tmp/fixture",
+  "toolName": "Bash",
+  "toolInput": { "command": "npm test" }
+}

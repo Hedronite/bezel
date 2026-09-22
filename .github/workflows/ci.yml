@@ -84,6 +84,7 @@ jobs:
             nix eval --raw ".#packages.$sys.omapi.pname"
             nix eval --raw ".#packages.$sys.jev-router.pname"
             nix eval --raw ".#packages.$sys.cursor-agent-jev.name"
+            nix eval --raw ".#packages.$sys.grok-build-jev.name"
             nix eval --json ".#packages.$sys.omp-pin.meta.platforms"
           done
 
@@ -94,7 +95,7 @@ jobs:
       - name: build overlay packages (skip 180–240MB pin)
         if: ${{ !matrix.skip }}
         run: |
-          nix build -L .#omapi .#jev-router .#cursor-agent-jev
+          nix build -L .#omapi .#jev-router .#cursor-agent-jev .#grok-build-jev
           test -x result/bin/omapi || test -x result-2/bin/jev-router || true
           echo "omapi-pinned fetchurl skipped on GHA (build_omapi_pin=${{ matrix.build_omapi_pin }}; 180–240MB). Pin hashes are in packages/omp-pin.nix."
 

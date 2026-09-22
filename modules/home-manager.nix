@@ -27,9 +27,10 @@ in
       type = lib.types.listOf lib.types.package;
       default =
         lib.optional (pkgs ? jev-router) pkgs.jev-router
-        ++ lib.optional (pkgs ? cursor-agent-jev) pkgs.cursor-agent-jev;
-      defaultText = lib.literalExpression "[ pkgs.jev-router pkgs.cursor-agent-jev ]";
-      description = "Additional overlay packages on PATH (router + cursor-agent-jev).";
+        ++ lib.optional (pkgs ? cursor-agent-jev) pkgs.cursor-agent-jev
+        ++ lib.optional (pkgs ? grok-build-jev) pkgs.grok-build-jev;
+      defaultText = lib.literalExpression "[ pkgs.jev-router pkgs.cursor-agent-jev pkgs.grok-build-jev ]";
+      description = "Additional overlay packages on PATH (router, cursor-agent-jev, Grok Build harness).";
     };
 
     skillsSource = lib.mkOption {

@@ -30,7 +30,7 @@ nix build .#jev-router
   --diff-file packages/jev-router/testdata/skip-marker.diff
 ```
 
-Skill (omp / Home Manager skills input): `skills-stub/check/SKILL.md`.
+Skill (flake skills input; Home Manager symlinks it for the omp harness): `skills-stub/check/SKILL.md`.
 
 ## What you get
 

@@ -1,5 +1,5 @@
 <p align="center">
-  <strong>omapi-overlay</strong> — a Nix flake overlay: stock <strong>omp</strong>, thin <code>omapi</code> wrap, skills input, optional Jev gates.
+  <strong>omapi-overlay</strong> — a harness-agnostic Nix overlay: skills, Jev gates, and tooling.
 </p>
 
 <p align="center">
@@ -8,7 +8,6 @@
   <a href="https://nixos.org"><img src="https://img.shields.io/badge/Nix-5277C3?style=flat&colorA=222222&logo=nixos&logoColor=white" alt="Nix"></a>
   <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat&colorA=222222&logo=typescript&logoColor=white" alt="TypeScript"></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/Node-339933?style=flat&colorA=222222&logo=nodedotjs&logoColor=white" alt="Node"></a>
-  <a href="https://github.com/can1357/oh-my-pi/releases/tag/v18.2.6"><img src="https://img.shields.io/badge/omp-v18.2.6-8A2BE2?style=flat&colorA=222222" alt="omp v18.2.6 pin"></a>
 </p>
 
 <p align="center">
@@ -22,32 +21,30 @@
   <a href="#contributing">Contributing</a>
 </p>
 
-<p align="center">
-  Wraps <a href="https://github.com/can1357/oh-my-pi">oh-my-pi</a> (omp), itself a fork of <a href="https://github.com/badlogic/pi-mono">Pi</a> by <a href="https://github.com/mariozechner">@mariozechner</a>.
-</p>
-
 ---
 
-This flake overlays stock [omp](https://github.com/can1357/oh-my-pi) with a thin **`omapi`** command, a skills flake input, and optional Jev gates for `cursor-agent`. Humans and widgets call `omapi`. There is no omp source tree in this repository.
+This repository is a harness-agnostic overlay: a skills flake input, Jev gates, and the tooling that calls them. `jev-router` is the gate. `cursor-agent-jev` is the Cursor adapter. Grok Build `PreToolUse` uses the same policy ids ([docs/POLICY-MAP.md](docs/POLICY-MAP.md)). `omapi` is an optional thin wrap of host `omp` or `$OMP_BIN` when that engine is the one you run. There is no omp source tree in this repository.
 
 ## What it is
 
 | | This overlay |
 | --- | --- |
-| Command you call | `omapi` |
-| Engine | Stock omp — host `omp` / `$OMP_BIN`, or the documented release pin |
+| What it is | Harness-agnostic overlay: skills, Jev gates, tooling |
 | Skills | Flake `inputs.skills` only |
-| Jev | Optional `jev-router` + `cursor-agent-jev` (shadow by default) |
+| Jev | `jev-router`, shadow by default. Adapters call it; they do not keep a second policy map |
+| Cursor adapter | `cursor-agent-jev` |
+| omp engine | Optional. `omapi` wraps host `omp` / `$OMP_BIN`, or `omapi-pinned` |
 | Consume via | `overlays.default`, `homeManagerModules.default`, or `packages.<system>.*` |
 
 ### What it is not
 
 | Claim | Reality |
 | --- | --- |
-| An omp source fork | No omp sources here. Features come from upstream omp. |
+| omp sources in this tree | None. The engine binary stays upstream. |
 | A rebuilt `omp` | The wrap is `omapi`. Install omp from [omp.sh](https://omp.sh) or use `omapi-pinned`. |
 | A skills product repo | Skills are a flake input. This tree ships a bootstrap stub only. |
 | A Jev lab or key store | The router is Choice-only. Keys stay in the process environment. |
+| One harness's UX | Cursor, Grok Build, and omp share the skills input and the same Jev gates. |
 
 ## Quick start
 
@@ -83,7 +80,7 @@ nix build .#omapi-pinned
 }
 ```
 
-`programs.omapi.enable` installs `omapi` and, by default, `jev-router` and `cursor-agent-jev`. It also symlinks the skills input to `~/.config/omp/agent/skills`.
+`programs.omapi.enable` installs `omapi` and, by default, `jev-router` and `cursor-agent-jev`. It symlinks the skills input to `~/.config/omp/agent/skills` for the omp harness.
 
 ## Packages
 
@@ -96,7 +93,7 @@ nix build .#omapi-pinned
 
 ## Jev
 
-Jev is a **shadow-first** decision gate in front of `cursor-agent`. Shadow logs a Choice and **never blocks**. `TYPESAFE_API_KEY` is runtime-only — set it in the process environment; the flake does not bake it.
+Jev is a **shadow-first** decision gate. `jev-router` asks Choice and prints a verdict. Harness adapters consume that verdict; they do not keep a second policy map. `cursor-agent-jev` is the Cursor adapter: shadow logs a Choice and **never blocks**. `TYPESAFE_API_KEY` is runtime-only — set it in the process environment; the flake does not bake it.
 
 ```sh
 # TYPESAFE_API_KEY must already be in the environment

@@ -1,5 +1,5 @@
 {
-  description = "omapi-overlay: stock omp pin + thin omapi wrap + skills SoT + Jev gates. Not an omp source fork.";
+  description = "omapi-overlay: harness-agnostic skills, Jev gates, and tooling. omp is an optional engine pin.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

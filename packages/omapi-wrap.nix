@@ -46,7 +46,7 @@ stdenvNoCC.mkDerivation {
   '';
 
   meta = {
-    description = "Thin omapi wrap of stock omp (overlay, not an omp source fork)";
+    description = "Thin wrap of a host or pinned omp binary (optional engine path)";
     homepage = "https://github.com/VirtualMachinist/omapi-overlay";
     mainProgram = "omapi";
     license = lib.licenses.mit;

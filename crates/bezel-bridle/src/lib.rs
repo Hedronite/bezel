@@ -12,6 +12,7 @@ mod judge;
 mod loop_stop;
 mod permission;
 mod policy;
+mod router;
 mod transport;
 
 pub use calls::tool_call;
@@ -28,6 +29,7 @@ pub use harness::{
 };
 pub use loop_stop::{apply_loop_stop_thresholds, LoopStopDecision};
 pub use permission::{active_hook, write_from_flags, WriteVerdict};
+pub use router::bash_no_key;
 pub use policy::{
     hook_decision, match_pretool_class, pretool_hook_decision, pretool_stamp, GateVerdict, HookOut, AUTO_ALLOW,
     CHECK_POLICY_ID, CONCERN_PARK, MAX_HUNK_CHARS, LOOP_STOP_MIN_CONFIDENCE, LOOP_STOP_MIN_MARGIN, LOOP_STOP_MIN_PROBABILITY,
@@ -582,6 +584,67 @@ mod tests {
         let call = tool_call();
         assert_eq!(call.transport, "facet");
         assert!(!call.initiated);
+    }
+
+    fn router_golden(name: &str) -> String {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/jev-router/testdata/router")
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()))
+    }
+
+    fn clean_repo() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("bezel-router-g3-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            let run = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .env("HOME", &dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "jev")
+                .env("GIT_AUTHOR_EMAIL", "jev@example.com")
+                .env("GIT_COMMITTER_NAME", "jev")
+                .env("GIT_COMMITTER_EMAIL", "jev@example.com")
+                .output()
+                .unwrap_or_else(|err| panic!("git {}: {err}", args.join(" ")));
+            assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+        };
+        git(&["init"]);
+        git(&[
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "user.name=jev",
+            "-c",
+            "user.email=jev@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "init",
+        ]);
+        dir
+    }
+
+    #[test]
+    fn g3_bash_no_key_matches_node_active_and_shadow() {
+        let repo = clean_repo();
+        let active = bash_no_key("active", &repo);
+        let shadow = bash_no_key("shadow", &repo);
+        assert_eq!(active, router_golden("bash-active.json"));
+        assert_eq!(shadow, router_golden("bash-shadow.json"));
+        assert!(active.contains("\"missingKey\":true"));
+        assert!(active.contains("\"choice\":\"escalate\""));
+        assert!(active.contains("\"gate\":\"hold\""));
+        assert!(active.contains("\"policy\":\"omapi-loop-stop-policy@1\""));
+        assert!(!active.contains("jev uncertain"));
+        assert!(shadow.contains("\"blocked\":false"));
+        assert!(shadow.contains("\"choice\":\"unclassified\""));
+        assert!(!shadow.contains("\"blocked\":true"));
+        assert!(!shadow.contains("jev uncertain"));
+        let _ = std::fs::remove_dir_all(&repo);
     }
 
     fn facts_golden(name: &str) -> String {

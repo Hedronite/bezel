@@ -120,10 +120,42 @@ pub fn decide_hook(event: &HookEvent, modes: &Modes, verdict: Option<&GateVerdic
 }
 
 /// Same entry `bezel-bridle hook` uses. Stdin JSON in, one JSON line out, exit 2 on deny.
+/// No API key uses the same missing-key router verdict as `jev-router`: active Bash
+/// escalates on the loop-stop policy instead of an empty `jev uncertain`.
 pub fn hook_command(stdin: &str, env: &[(&str, &str)]) -> (i32, String) {
     let modes = modes_from_env(env);
-    let decision = hook_on_text(stdin, &modes, None);
+    let event = parse_hook_event(stdin).unwrap_or(HookEvent {
+        tool_name: String::new(),
+    });
+    let has_key = env
+        .iter()
+        .any(|(key, value)| *key == "TYPESAFE_API_KEY" && !value.is_empty());
+    let verdict = if !has_key && modes.jev_mode == "active" {
+        Some(missing_key_verdict())
+    } else {
+        None
+    };
+    let mut decision = decide_hook(&event, &modes, verdict.as_ref());
+    if !has_key && decision.decision == "deny" && !decision.reason.contains("detail=") {
+        decision.reason = format!(
+            "{} detail=missing_key question=Is the judge available for this action?",
+            decision.reason
+        );
+    }
     (decision.exit_code, hook_stdout(&decision))
+}
+
+fn missing_key_verdict() -> GateVerdict {
+    GateVerdict {
+        bypass: false,
+        mode: "active".to_string(),
+        choice: Some("escalate".to_string()),
+        gate: Some("hold".to_string()),
+        blocked: true,
+        policy_id: String::new(),
+        permission: None,
+        calls: None,
+    }
 }
 
 pub fn hook_on_text(text: &str, modes: &Modes, verdict: Option<&GateVerdict>) -> HookOut {

@@ -33,7 +33,7 @@ pub use harness::{
 pub use loop_stop::{apply_loop_stop_thresholds, LoopStopDecision};
 pub use permission::{
     active_hook, apply_permission_verdict, decide_permission, write_from_flags, PermissionInput,
-    PermissionParent, PermissionVerdict, WriteVerdict,
+    PermissionParent, PermissionVerdict, TypedPermission, WriteVerdict,
 };
 pub use router::bash_no_key;
 pub use policy::{
@@ -252,6 +252,10 @@ mod tests {
             diff: "",
             concern: None,
             flags: None,
+            tool_name: "",
+            effect: "",
+            routing_outcome: None,
+            typed: None,
         }
     }
 
@@ -465,6 +469,10 @@ mod tests {
             diff,
             concern,
             flags: None,
+            tool_name: "",
+            effect: "",
+            routing_outcome: None,
+            typed: None,
         }
     }
 
@@ -645,6 +653,196 @@ mod tests {
         assert!(ask.hitl);
         assert_ne!(ask.choice, "continue");
         assert!(!ask.json.contains("\"decision\":\"allow\""));
+    }
+
+    fn mcp_input<'a>(
+        label: Option<&'static str>,
+        confidence: f64,
+        allow_p: f64,
+        deny_p: f64,
+        ask_p: f64,
+        tool_name: &'a str,
+        effect: &'a str,
+        routing_outcome: Option<&'a str>,
+        typed: Option<TypedPermission<'a>>,
+    ) -> PermissionInput<'a> {
+        PermissionInput {
+            class_id: "mcp",
+            requested_mode: "active",
+            has_key: true,
+            content_present: false,
+            label,
+            confidence,
+            allow_p,
+            deny_p,
+            ask_p,
+            path: "",
+            diff: "",
+            concern: None,
+            flags: None,
+            tool_name,
+            effect,
+            routing_outcome,
+            typed,
+        }
+    }
+
+    fn facet_typed(honor: bool) -> TypedPermission<'static> {
+        TypedPermission {
+            honor,
+            policy_id: ROUTING_POLICY_ID,
+            transport: "facet",
+            mapped: "continue",
+            reason: "selected",
+            code_deny: false,
+            name: "",
+            effect: "",
+        }
+    }
+
+    #[test]
+    fn g4_mcp_read_follows_loop_stop_and_workflow_does_not_continue() {
+        let mutate = decide_permission(&mcp_input(
+            Some("allow"),
+            0.9,
+            0.8,
+            0.1,
+            0.1,
+            "linear__save_issue",
+            "write",
+            None,
+            None,
+        ))
+        .unwrap();
+        assert_permission("mcp-mutate-write.json", &mutate);
+        assert_eq!(mutate.choice, "escalate");
+        assert!(mutate.json.contains("\"reason\":\"mutating_mcp\""));
+        assert_ne!(mutate.choice, "continue");
+        assert_eq!(shell_hook("active", &mutate), permission_golden("mcp-mutate-write-hook.json"));
+
+        let named = decide_permission(&mcp_input(
+            Some("allow"),
+            0.9,
+            0.8,
+            0.1,
+            0.1,
+            "notes__add",
+            "",
+            None,
+            None,
+        ))
+        .unwrap();
+        assert_permission("mcp-mutate-name.json", &named);
+        assert!(named.json.contains("\"reason\":\"mutating_mcp\""));
+        let effect_wins = decide_permission(&mcp_input(
+            Some("allow"),
+            0.9,
+            0.8,
+            0.1,
+            0.1,
+            "lapis__search",
+            "write",
+            None,
+            None,
+        ))
+        .unwrap();
+        assert_permission("mcp-effect-beats-name.json", &effect_wins);
+        assert_eq!(effect_wins.choice, "escalate");
+
+        let read = decide_permission(&mcp_input(
+            Some("allow"),
+            0.9,
+            0.8,
+            0.1,
+            0.1,
+            "linear__list_issues",
+            "read",
+            None,
+            None,
+        ))
+        .unwrap();
+        assert_permission("mcp-read-list.json", &read);
+        assert_eq!(read.choice, "continue");
+        assert_eq!(read.policy_id, ROUTING_POLICY_ID);
+        assert!(read.json.contains("\"reason\":\"selected\""));
+        assert!(!read.json.contains("workflow_is_not_permission"));
+        assert_eq!(shell_hook("shadow", &read), permission_golden("mcp-read-list-hook.json"));
+        assert_ne!(shell_hook("shadow", &read).contains("\"decision\":\"allow\""), true);
+
+        let search = decide_permission(&mcp_input(
+            Some("allow"),
+            0.9,
+            0.8,
+            0.1,
+            0.1,
+            "lapis__search",
+            "",
+            None,
+            Some(TypedPermission {
+                honor: false,
+                policy_id: "",
+                transport: "",
+                mapped: "escalate",
+                reason: "no_catalog",
+                code_deny: false,
+                name: "",
+                effect: "",
+            }),
+        ))
+        .unwrap();
+        assert_permission("mcp-lapis-search.json", &search);
+        assert_eq!(search.choice, "continue");
+        assert!(!search.json.contains("no_catalog"));
+        assert!(!search.json.contains("workflow_is_not_permission"));
+
+        let bare = decide_permission(&mcp_input(None, 0.0, 0.0, 0.0, 0.0, "lapis__search", "", None, None)).unwrap();
+        assert_permission("mcp-lapis-bare.json", &bare);
+        assert_ne!(bare.choice, "continue");
+        assert_eq!(bare.json.contains("\"label\":\"ask\""), true);
+        assert!(!bare.json.contains("workflow_is_not_permission"));
+
+        let workflow = decide_permission(&mcp_input(Some("allow"), 0.0, 0.0, 0.0, 0.0, "", "", Some("check"), None)).unwrap();
+        assert_permission("mcp-workflow.json", &workflow);
+        assert_eq!(workflow.choice, "escalate");
+        assert!(workflow.json.contains("\"reason\":\"workflow_is_not_permission\""));
+        assert_ne!(workflow.choice, "continue");
+        assert_eq!(shell_hook("active", &workflow), permission_golden("mcp-workflow-hook.json"));
+
+        let adopted = decide_permission(&mcp_input(
+            Some("allow"),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            "linear__list_issues",
+            "read",
+            Some("check"),
+            Some(facet_typed(true)),
+        ))
+        .unwrap();
+        assert_permission("mcp-typed-facet.json", &adopted);
+        assert_eq!(adopted.choice, "continue");
+        assert_eq!(adopted.policy_id, ROUTING_POLICY_ID);
+        assert!(adopted.json.contains("\"reason\":\"selected\""));
+        assert!(!adopted.json.contains("workflow_is_not_permission"));
+        assert!(!adopted.auto_allow);
+
+        let still_ask = decide_permission(&mcp_input(
+            None,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            "linear__list_issues",
+            "read",
+            Some("check"),
+            Some(facet_typed(false)),
+        ))
+        .unwrap();
+        assert_permission("mcp-typed-not-honor.json", &still_ask);
+        assert_ne!(still_ask.choice, "continue");
+        assert!(still_ask.json.contains("\"reason\":\"cannot_tell\""));
+        assert!(!still_ask.json.contains("workflow_is_not_permission"));
     }
 
     #[test]

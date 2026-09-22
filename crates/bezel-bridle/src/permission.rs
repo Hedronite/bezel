@@ -74,6 +74,23 @@ pub struct PermissionInput<'a> {
     pub concern: Option<f64>,
     /// `None` collects flags from `diff` and `path`. `Some` is the caller's list.
     pub flags: Option<&'a [&'a str]>,
+    pub tool_name: &'a str,
+    pub effect: &'a str,
+    pub routing_outcome: Option<&'a str>,
+    pub typed: Option<TypedPermission<'a>>,
+}
+
+/// The fields of a typed Facet call that permission reads. Not a second client.
+#[derive(Clone, Copy)]
+pub struct TypedPermission<'a> {
+    pub honor: bool,
+    pub policy_id: &'a str,
+    pub transport: &'a str,
+    pub mapped: &'a str,
+    pub reason: &'a str,
+    pub code_deny: bool,
+    pub name: &'a str,
+    pub effect: &'a str,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,9 +124,8 @@ struct Surface {
     new_catalog: bool,
 }
 
-/// `decidePermission` for the surface, mode, and write steps.
-/// A class other than shell, write, or mcp is `None` (`null`).
-/// Keyed mcp routing stays on a later step.
+/// `decidePermission` for shell, write, and mcp.
+/// A class other than those three is `None` (`null`).
 pub fn decide_permission(input: &PermissionInput<'_>) -> Option<PermissionVerdict> {
     let surface = surface(input.class_id)?;
     let mode = effective_mode(input.requested_mode, input.has_key);
@@ -136,6 +152,9 @@ pub fn decide_permission(input: &PermissionInput<'_>) -> Option<PermissionVerdic
     }
     if surface.id == "write" {
         return Some(write_decision(surface, mode, input, &flags));
+    }
+    if surface.id == "mcp" {
+        return Some(mcp_decision(surface, mode, input));
     }
     None
 }
@@ -272,6 +291,131 @@ fn hold_question(reason: &str, choice: &str) -> &'static str {
     }
 }
 
+fn mcp_decision(surface: Surface, mode: &'static str, input: &PermissionInput<'_>) -> PermissionVerdict {
+    if let Some(typed) = input.typed {
+        if typed.honor && typed.policy_id == surface.policy_id && typed.transport == "facet" {
+            let mapped = match typed.mapped {
+                "continue" => "continue",
+                "stop" => "stop",
+                _ => "escalate",
+            };
+            let label = match mapped {
+                "continue" => Some("allow"),
+                "stop" => Some("deny"),
+                _ => Some("ask"),
+            };
+            let reason = if typed.reason.is_empty() { "typed_call" } else { typed.reason };
+            return pack(
+                surface,
+                mode,
+                Some(mapped),
+                label,
+                input.label,
+                reason,
+                typed.code_deny,
+                false,
+            );
+        }
+    }
+    let kind = mcp_kind(mcp_name(input), mcp_effect(input));
+    if kind == "mutate" {
+        return pack(
+            surface,
+            mode,
+            Some("escalate"),
+            Some("ask"),
+            input.label,
+            "mutating_mcp",
+            false,
+            false,
+        );
+    }
+    if kind == "read" {
+        return shell_from_label(surface, mode, &read_shell(input));
+    }
+    let outcome = input.routing_outcome.unwrap_or("");
+    let reason = if !outcome.is_empty() && outcome != "cannot_tell" {
+        "workflow_is_not_permission"
+    } else {
+        "cannot_tell"
+    };
+    pack(
+        surface,
+        mode,
+        Some("escalate"),
+        Some("ask"),
+        input.label,
+        reason,
+        false,
+        false,
+    )
+}
+
+fn read_shell<'a>(input: &'a PermissionInput<'a>) -> PermissionInput<'a> {
+    let mut read = *input;
+    read.content_present = true;
+    read
+}
+
+fn mcp_name<'a>(input: &'a PermissionInput<'a>) -> &'a str {
+    if !input.tool_name.is_empty() {
+        return input.tool_name;
+    }
+    input.typed.map(|typed| typed.name).unwrap_or("")
+}
+
+fn mcp_effect<'a>(input: &'a PermissionInput<'a>) -> &'a str {
+    if !input.effect.is_empty() {
+        return input.effect;
+    }
+    input.typed.map(|typed| typed.effect).unwrap_or("")
+}
+
+fn mcp_kind(name: &str, effect: &str) -> &'static str {
+    let effect = effect.trim();
+    if effect.eq_ignore_ascii_case("read") {
+        return "read";
+    }
+    if !effect.is_empty() {
+        return "mutate";
+    }
+    if mcp_word(name, &["search", "list", "get", "read", "fetch", "find"]) {
+        return "read";
+    }
+    if mcp_word(
+        name,
+        &[
+            "save", "create", "update", "delete", "write", "set", "remove", "send", "add", "put", "post",
+        ],
+    ) {
+        return "mutate";
+    }
+    "unknown"
+}
+
+fn mcp_word(name: &str, words: &[&str]) -> bool {
+    let bytes = name.as_bytes();
+    for word in words {
+        let needle = word.as_bytes();
+        if needle.is_empty() || needle.len() > bytes.len() {
+            continue;
+        }
+        let mut index = 0;
+        while index + needle.len() <= bytes.len() {
+            if bytes[index..index + needle.len()].eq_ignore_ascii_case(needle) {
+                let before = index == 0 || (index >= 2 && &bytes[index - 2..index] == b"__");
+                let after = index + needle.len();
+                let after_ok = after == bytes.len() || bytes[after] == b'_';
+                if before && after_ok {
+                    return true;
+                }
+            }
+            index += 1;
+        }
+    }
+    false
+}
+
 fn shell_from_label(surface: Surface, mode: &'static str, input: &PermissionInput<'_>) -> PermissionVerdict {
     if !input.content_present {
         return pack(
@@ -352,7 +496,7 @@ fn pack(
     mut mapped: Option<&'static str>,
     mut label: Option<&'static str>,
     model_label: Option<&'static str>,
-    reason: &'static str,
+    reason: &str,
     code_deny: bool,
     missing_key: bool,
 ) -> PermissionVerdict {

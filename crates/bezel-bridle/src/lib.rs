@@ -3,16 +3,19 @@
 //! Pure core: `policy`, `check`, `permission`, `loop_stop`. No network. No client.
 
 mod check;
+mod harness;
 mod loop_stop;
 mod permission;
 mod policy;
 
 pub use check::{check_envelope, deterministic_flags, file_kind, parse_unified_diff, write_flags, CheckReport, Hunk};
+pub use harness::{decide_hook, hook_on_text, hook_stdout, modes_from_env, parse_hook_event, HookEvent, Modes};
 pub use loop_stop::{apply_loop_stop_thresholds, LoopStopDecision};
 pub use permission::{active_hook, write_from_flags, WriteVerdict};
 pub use policy::{
-    hook_decision, AUTO_ALLOW, CHECK_POLICY_ID, CONCERN_PARK, LOOP_STOP_MIN_CONFIDENCE, LOOP_STOP_MIN_MARGIN,
-    LOOP_STOP_MIN_PROBABILITY, LOOP_STOP_POLICY_ID, WRITE_CODE_DENY_FLAGS,
+    hook_decision, match_pretool_class, pretool_hook_decision, pretool_stamp, GateVerdict, HookOut, AUTO_ALLOW,
+    CHECK_POLICY_ID, CONCERN_PARK, LOOP_STOP_MIN_CONFIDENCE, LOOP_STOP_MIN_MARGIN, LOOP_STOP_MIN_PROBABILITY,
+    LOOP_STOP_POLICY_ID, ROUTING_POLICY_ID, WRITE_CODE_DENY_FLAGS,
 };
 
 #[cfg(test)]
@@ -207,5 +210,157 @@ mod tests {
         assert_eq!(shaky.outcome, "cannot_tell");
         assert_eq!(shaky.reason, "model_uncertain");
         assert_ne!(shaky.outcome, "continue");
+    }
+
+    fn assert_hook(decision: &HookOut) {
+        assert!(decision.decision == "defer" || decision.decision == "deny");
+        assert_ne!(decision.decision, "allow");
+        let line = hook_stdout(decision);
+        assert!(line.ends_with('\n'));
+        assert!(!line.contains("\"decision\":\"allow\""));
+        assert!(line.contains("\"decision\":\"defer\"") || line.contains("\"decision\":\"deny\""));
+    }
+
+    #[test]
+    fn g2_bash_fixture_matches_node_hook_decisions() {
+        let raw = testdata("grok-pretool-bash.json");
+        let event = parse_hook_event(&raw).expect("bash fixture");
+        assert_eq!(event.tool_name, "Bash");
+        let stamp = pretool_stamp(&event.tool_name).expect("stamp");
+        assert!(stamp.matched);
+        assert_eq!(stamp.class_id, Some("shell"));
+        assert_eq!(stamp.policy_id, Some(LOOP_STOP_POLICY_ID));
+
+        let shadow = modes_from_env(&[("JEV_MODE", "shadow")]);
+        let deferred = decide_hook(
+            &event,
+            &shadow,
+            Some(&GateVerdict::simple("shadow", "continue", "auto", false)),
+        );
+        assert_eq!(deferred.decision, "defer");
+        assert_hook(&deferred);
+
+        let active = modes_from_env(&[("JEV_MODE", "active")]);
+        let denied = decide_hook(
+            &event,
+            &active,
+            Some(&GateVerdict {
+                policy_id: LOOP_STOP_POLICY_ID.to_string(),
+                ..GateVerdict::simple("active", "stop", "hold", true)
+            }),
+        );
+        assert_eq!(denied.decision, "deny");
+        assert_hook(&denied);
+
+        let uncertain = hook_on_text(&raw, &active, None);
+        assert_eq!(uncertain.decision, "deny");
+        assert_eq!(uncertain.reason, "jev uncertain");
+        assert_hook(&uncertain);
+        let shadow_empty = hook_on_text(&raw, &shadow, None);
+        assert_eq!(shadow_empty.decision, "defer");
+        assert_eq!(shadow_empty.reason, "shadow");
+        assert_hook(&shadow_empty);
+    }
+
+    #[test]
+    fn g2_pretool_table_defers_or_denies_and_never_allows() {
+        let samples = [
+            (true, "active", "stop", "hold", true, "", "defer", "bypass"),
+            (false, "shadow", "stop", "hold", false, "", "defer", "shadow"),
+            (false, "active", "continue", "auto", false, "", "defer", "exec"),
+            (false, "active", "unclassified", "auto", false, "", "defer", "exec"),
+            (
+                false,
+                "active",
+                "stop",
+                "hold",
+                true,
+                LOOP_STOP_POLICY_ID,
+                "deny",
+                "jev choice=stop gate=hold policy=omapi-loop-stop-policy@1",
+            ),
+            (false, "active", "escalate", "hold", true, "", "deny", "jev choice=escalate gate=hold"),
+            (
+                false,
+                "active",
+                "unclassified",
+                "hold",
+                false,
+                "",
+                "deny",
+                "jev choice=unclassified gate=hold",
+            ),
+        ];
+        for (bypass, mode, choice, gate, blocked, policy_id, decision, reason) in samples {
+            let mut verdict = GateVerdict::simple(mode, choice, gate, blocked);
+            verdict.bypass = bypass;
+            verdict.policy_id = policy_id.to_string();
+            let hook = pretool_hook_decision(&verdict);
+            assert_eq!(hook.decision, decision);
+            assert_eq!(hook.reason, reason);
+            assert_ne!(hook.decision, "allow");
+            assert_eq!(hook.exit_code, if decision == "deny" { 2 } else { 0 });
+            assert_hook(&hook);
+        }
+    }
+
+    #[test]
+    fn g2_unmatched_bypass_and_malformed_stay_defer_or_deny() {
+        let bash = HookEvent {
+            tool_name: "Bash".to_string(),
+        };
+        let bypass = decide_hook(
+            &bash,
+            &modes_from_env(&[("JEV_BYPASS", "1")]),
+            Some(&GateVerdict::simple("active", "stop", "hold", true)),
+        );
+        assert_eq!(bypass.decision, "defer");
+        assert_eq!(bypass.reason, "bypass");
+        assert_hook(&bypass);
+
+        let not_bypass = decide_hook(
+            &bash,
+            &modes_from_env(&[("JEV_BYPASS", "yes"), ("JEV_MODE", "active")]),
+            Some(&GateVerdict {
+                policy_id: LOOP_STOP_POLICY_ID.to_string(),
+                ..GateVerdict::simple("active", "stop", "hold", true)
+            }),
+        );
+        assert_eq!(not_bypass.decision, "deny");
+        assert_hook(&not_bypass);
+
+        let unmapped = decide_hook(
+            &HookEvent {
+                tool_name: "read_file".to_string(),
+            },
+            &modes_from_env(&[("JEV_MODE", "active")]),
+            Some(&GateVerdict::simple("active", "continue", "auto", false)),
+        );
+        assert_eq!(unmapped.decision, "defer");
+        assert_eq!(unmapped.reason, "unmatched");
+        assert_hook(&unmapped);
+
+        let malformed = hook_on_text("not-json", &modes_from_env(&[("JEV_MODE", "active")]), None);
+        assert_eq!(malformed.decision, "deny");
+        assert_hook(&malformed);
+        let empty = hook_on_text("", &modes_from_env(&[]), None);
+        assert_eq!(empty.decision, "defer");
+        assert_hook(&empty);
+
+        let catalog = testdata("mcp-tools.json");
+        for name in ["linear__list_issues", "linear__save_issue"] {
+            assert!(catalog.contains(name));
+            assert_eq!(match_pretool_class(name).map(|row| row.0), Some("mcp"));
+            let event = HookEvent {
+                tool_name: name.to_string(),
+            };
+            let continued = decide_hook(
+                &event,
+                &modes_from_env(&[("JEV_MODE", "active")]),
+                Some(&GateVerdict::simple("active", "continue", "auto", false)),
+            );
+            assert_eq!(continued.decision, "defer");
+            assert_hook(&continued);
+        }
     }
 }

@@ -5,9 +5,8 @@
   autoPatchelfHook,
 }:
 
-# Stock omp binary pin (can1357/oh-my-pi release assets).
-# This is a fetchurl of upstream prebuilts — not an omp source fork,
-# and not a vendor of omp sources into this repo.
+# Upstream omp binary pin (can1357/oh-my-pi release assets).
+# fetchurl of upstream prebuilts. This repo does not vendor omp sources.
 #
 # Hashes from https://github.com/can1357/oh-my-pi/releases/download/v18.2.6/SHA256SUMS.txt
 # converted to SRI. If a future system has no artifact, throw (CI honesty).
@@ -65,7 +64,7 @@ stdenvNoCC.mkDerivation {
   '';
 
   meta = {
-    description = "Stock omp prebuilt from can1357/oh-my-pi v${version} (pin only; not a source fork)";
+    description = "Upstream oh-my-pi v${version} prebuilt (fetchurl pin)";
     homepage = "https://github.com/can1357/oh-my-pi";
     downloadPage = "https://github.com/can1357/oh-my-pi/releases/tag/v${version}";
     license = lib.licenses.mit;

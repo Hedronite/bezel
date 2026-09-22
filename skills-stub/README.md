@@ -15,7 +15,7 @@ Shipped skills:
 
 | id | Role |
 | --- | --- |
-| `bootstrap` | Placeholder so the input is a valid omp skills directory |
+| `bootstrap` | Placeholder so the input is a valid skills directory (`*/SKILL.md`) |
 | `check` | Shadow Jev-first diff check (`jev-router --check`). Empty findings ≠ approval |
 
 See [docs/SPIKE-stanley.md](../docs/SPIKE-stanley.md).

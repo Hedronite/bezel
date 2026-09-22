@@ -37,16 +37,20 @@ export function parseUnifiedDiff(text) {
   let path = "";
   let buf = [];
   let header = "";
+  let gone = false;
 
   const flush = () => {
     if (!header && buf.length === 0) return;
     const body = buf.join("\n");
     const id = `h${hunks.length + 1}`;
+    const goneHeader = gone ? "+++ /dev/null" : "";
+    const goneText = gone ? "deleted file mode" : "";
     hunks.push({
       id,
       path: path || "unknown",
-      header,
-      text: [header, body].filter(Boolean).join("\n"),
+      header: [goneHeader, header].filter(Boolean).join("\n"),
+      text: [goneText, goneHeader, header, body].filter(Boolean).join("\n"),
+      deleted: gone,
       added: buf.filter((line) => line.startsWith("+") && !line.startsWith("+++")),
       removed: buf.filter((line) => line.startsWith("-") && !line.startsWith("---")),
     });
@@ -57,13 +61,19 @@ export function parseUnifiedDiff(text) {
   for (const line of lines) {
     if (line.startsWith("diff --git ")) {
       flush();
+      gone = false;
       const match = line.match(/diff --git a\/(.+) b\/(.+)/);
       path = match ? match[2] : path;
       continue;
     }
+    if (line.startsWith("deleted file mode ")) {
+      gone = true;
+      continue;
+    }
     if (line.startsWith("+++ ")) {
       const plus = line.slice(4);
-      if (plus !== "/dev/null") path = plus.replace(/^b\//, "");
+      if (plus === "/dev/null") gone = true;
+      else path = plus.replace(/^b\//, "");
       continue;
     }
     if (line.startsWith("@@")) {
@@ -99,7 +109,10 @@ export function deterministicFlags(hunk) {
   const assertAdded = added.filter((line) => ASSERTION.test(line)).length;
   if (kind === "test" && assertRemoved > assertAdded) flags.push("assertions_removed");
 
-  const deleted = /\/dev\/null$/.test(hunk.header || "") || added.length === 0 && removed.length > 0 && /deleted file/i.test(hunk.text);
+  const deleted =
+    hunk.deleted === true ||
+    /(?:^|\n)\+\+\+ \/dev\/null(?:\n|$)/.test(hunk.header || "") ||
+    /deleted file mode/i.test(hunk.text || "");
   if (kind === "test" && deleted) flags.push("test_file_deleted");
 
   return { kind, flags };

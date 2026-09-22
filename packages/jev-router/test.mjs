@@ -29,7 +29,7 @@ import {
   schemaDumpCall,
   tinyCatalog,
 } from "./catalog.mjs";
-import { runCheck } from "./check.mjs";
+import { deterministicFlags, parseUnifiedDiff, runCheck } from "./check.mjs";
 import { decideHook, harnessConfig, harnessModes, parseHookEvent, runSmoke } from "./harness.mjs";
 import {
   availableCapabilities,
@@ -1418,11 +1418,19 @@ exec ${shQuote(process.execPath)} ${shQuote(script)} "$@"
 
     const deleted = [
       "diff --git a/src/math.test.js b/src/math.test.js",
+      "deleted file mode 100644",
+      "index 1111111..0000000",
       "--- a/src/math.test.js",
       "+++ /dev/null",
-      "@@ deleted file",
+      "@@ -1 +0,0 @@",
       "-const value = 1;",
     ].join("\n");
+    const deletedHunks = parseUnifiedDiff(deleted);
+    assert.equal(deletedHunks.length, 1);
+    assert.match(deletedHunks[0].header, /(?:^|\n)\+\+\+ \/dev\/null(?:\n|$)/);
+    assert.match(deletedHunks[0].header, /@@ -1 \+0,0 @@/);
+    assert.match(deletedHunks[0].text, /deleted file mode/);
+    assert.equal(deterministicFlags(deletedHunks[0]).flags.includes("test_file_deleted"), true);
     const cases = [
       ["secret_path", { path: ".env", diffText: docs }],
       ["skip_marker_added", { diffText: readFileSync(skipDiff, "utf8") }],

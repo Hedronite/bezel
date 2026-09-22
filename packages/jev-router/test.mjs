@@ -2312,6 +2312,81 @@ printf '%s\\n' '{"ok":true,"mode":"active","choice":"stop","gate":"hold","blocke
     assert.equal(config.stderr, "");
     rmSync(dir, { recursive: true, force: true });
   }),
+
+  test("hold reason includes detail and question and smoke logs one temp line", () => {
+    const held = decidePermission({
+      classId: "write",
+      requestedMode: "active",
+      hasKey: true,
+      diffText: "",
+      path: "src/app.js",
+    });
+    assert.equal(held.reason, "empty_findings_not_approval");
+    assert.match(held.hold, /detail=empty_findings_not_approval/);
+    assert.match(held.hold, /question=/);
+    const hook = decideHook({
+      event: { toolName: "search_replace" },
+      env: { JEV_PERMISSION_MODE: "active", TYPESAFE_API_KEY: "present-key" },
+      verdict: applyPermissionVerdict(
+        {
+          mode: "shadow",
+          choice: "continue",
+          gate: "auto",
+          blocked: false,
+          exec: true,
+          pretool: pretoolStamp({ toolName: "search_replace" }),
+        },
+        held,
+      ),
+    });
+    assert.equal(hook.decision, "deny");
+    assert.match(hook.reason, /policy=omapi-check-policy@1/);
+    assert.match(hook.reason, /detail=empty_findings_not_approval/);
+    assert.match(hook.reason, /question=/);
+    assert.notEqual(hook.decision, "allow");
+
+    const continued = decidePermission({
+      classId: "write",
+      requestedMode: "active",
+      hasKey: true,
+      concern: 0.2,
+      path: "notes/a.md",
+      diffText: "diff --git a/notes/a.md b/notes/a.md\n@@\n-old\n+new\n",
+    });
+    assert.equal(continued.choice, "continue");
+    assert.equal(continued.hold, undefined);
+
+    for (const flag of ["secret_path", "skip_marker_added", "assertions_removed", "test_file_deleted"]) {
+      const stopped = decidePermission({
+        classId: "write",
+        requestedMode: "active",
+        hasKey: true,
+        concern: 0.2,
+        flags: [flag],
+        path: "src/app.js",
+      });
+      assert.equal(stopped.reason, flag);
+      assert.match(stopped.hold, new RegExp(`detail=${flag}`));
+      assert.match(stopped.hold, /question=/);
+    }
+
+    const smoke = spawnSync(process.execPath, [join(here, "harness.mjs"), "smoke"], { encoding: "utf8" });
+    assert.equal(smoke.status, 0, smoke.stderr);
+    const report = JSON.parse(smoke.stdout);
+    const logPath = report.decisionLog.path;
+    assert.equal(report.decisionLog.lines, 1);
+    assert.ok(logPath.startsWith(tmpdir()));
+    assert.equal(logPath.includes("/.grok/logs/jev"), false);
+    const body = readFileSync(logPath, "utf8");
+    const lines = body.trim().split("\n");
+    assert.equal(lines.length, 1);
+    const row = JSON.parse(lines[0]);
+    assert.equal(row.decision, "deny");
+    assert.match(row.reason, /detail=/);
+    assert.match(row.reason, /question=/);
+    assert.equal(row.reason.includes("TYPESAFE_API_KEY"), false);
+    rmSync(dirname(logPath), { recursive: true, force: true });
+  }),
 ];
 
 let failed = 0;

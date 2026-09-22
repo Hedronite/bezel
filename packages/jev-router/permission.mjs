@@ -137,6 +137,43 @@ export function collectWriteFlags({ diffText = "", path = "" } = {}) {
   return [...flags];
 }
 
+function holdQuestion(reason, choice) {
+  switch (reason) {
+    case "secret_path":
+      return "Is this secret path intentional?";
+    case "skip_marker_added":
+      return "Should this test stay skipped?";
+    case "assertions_removed":
+      return "Should these assertions be removed?";
+    case "test_file_deleted":
+      return "Should this test file be deleted?";
+    case "empty_findings_not_approval":
+      return "Is this write in scope to continue?";
+    case "no_content":
+      return "What command should run?";
+    case "missing_key":
+      return "Is the judge available for this action?";
+    default:
+      if (choice === "stop") return "Should this action stop?";
+      return "Should a human review this before it continues?";
+  }
+}
+
+/** Human hold suffix. The machine `reason` stays the flag or code. */
+export function holdSuffix({ reason = "", choice = "" } = {}) {
+  const detail = String(reason || choice || "hold").replace(/[\r\n=]/g, "_");
+  return `detail=${detail} question=${holdQuestion(reason, choice)}`;
+}
+
+function holdOn(row) {
+  const held = row.gate === "hold" || row.choice === "stop" || row.choice === "escalate";
+  if (!held) return row;
+  const hold = holdSuffix({ reason: row.reason, choice: row.choice });
+  const detail = hold.slice("detail=".length, hold.indexOf(" question="));
+  const question = hold.slice(hold.indexOf("question=") + "question=".length);
+  return { ...row, detail, question, hold };
+}
+
 function pack(surface, mode, fields) {
   const honor = mode === "active";
   let mapped = fields.mapped ?? null;
@@ -169,7 +206,7 @@ function pack(surface, mode, fields) {
     }
   }
 
-  return {
+  return holdOn({
     surface: surface.id,
     policyId: surface.policyId,
     parent: surface.parent,
@@ -191,7 +228,7 @@ function pack(surface, mode, fields) {
     skipped: fields.skipped === true,
     missingKey: fields.missingKey === true,
     autoAllow: false,
-  };
+  });
 }
 
 function parentProbabilities(probabilities) {

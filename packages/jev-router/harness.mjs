@@ -20,13 +20,14 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, realpathSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyCallsVerdict, decideTypedCalls, effectiveTypedCallMode, normalizeCatalog } from "./calls.mjs";
 import { schemaDumpCall, tinyCatalog } from "./catalog.mjs";
 import { writeToolWire } from "./facts.mjs";
-import { applyPermissionVerdict, decidePermission, effectivePermissionMode } from "./permission.mjs";
+import { applyPermissionVerdict, decidePermission, effectivePermissionMode, holdSuffix } from "./permission.mjs";
 import {
   isJevBypass,
   matchPretoolClass,
@@ -148,9 +149,29 @@ export function decideHook({ event = {}, env = {}, verdict } = {}) {
   }
   if (verdict === null || typeof verdict !== "object" || Array.isArray(verdict)) return uncertain(modes, stamp);
   const withStamp = verdict.pretool && verdict.pretool.policyId ? verdict : { ...verdict, pretool: stamp };
-  const decision = pretoolHookDecision(withStamp);
+  const decision = annotateHold(pretoolHookDecision(withStamp), withStamp);
   if (decision.decision !== "defer" && decision.decision !== "deny") return uncertain(modes, stamp);
   return done({ ...decision, pretool: withStamp.pretool });
+}
+
+function annotateHold(decision, verdict) {
+  if (!decision || decision.decision !== "deny") return decision;
+  const reason = String(decision.reason || "");
+  if (!reason.startsWith("jev choice=")) return decision;
+  if (reason.includes("detail=") && reason.includes("question=")) return decision;
+  const permission = verdict && verdict.permission;
+  const calls = verdict && verdict.calls;
+  const suffix =
+    permission &&
+    typeof permission.hold === "string" &&
+    permission.hold.includes("detail=") &&
+    permission.hold.includes("question=")
+      ? permission.hold
+      : holdSuffix({
+          reason: (permission && permission.reason) || (calls && calls.reason) || (verdict && verdict.choice) || "",
+          choice: (permission && permission.choice) || (verdict && verdict.choice) || "",
+        });
+  return { ...decision, reason: `${reason} ${suffix}` };
 }
 
 function scrubText(text, env) {
@@ -228,7 +249,7 @@ function shellDenyAnswer() {
  * PreToolUse class → policy id, tiny discovery, MCP intent → FACET tool_call,
  * permission observed in shadow and enforced when that surface is active.
  */
-export function runSmoke() {
+export function runSmoke({ logDir } = {}) {
   const bashEvent = parseHookEvent(readFileSync(BASH_FIXTURE, "utf8"));
   expect(bashEvent.ok, "bash fixture");
   const bashStamp = pretoolStamp({ toolName: bashEvent.event.toolName });
@@ -424,6 +445,18 @@ export function runSmoke() {
     ),
   );
   expect(emptyHook.decision === "deny", "empty findings do not allow");
+  expect(emptyHook.reason.includes("detail=") && emptyHook.reason.includes("question="), "hold names a detail and a question");
+
+  const decisionDir = logDir || mkdtempSync(join(tmpdir(), "jev-decision-"));
+  const decisionPath = join(decisionDir, "decision.jsonl");
+  writeFileSync(
+    decisionPath,
+    `${JSON.stringify({
+      decision: emptyHook.decision,
+      reason: emptyHook.reason,
+      policyId: emptyHook.pretool ? emptyHook.pretool.policyId : null,
+    })}\n`,
+  );
 
   const keyAbsent = decidePermission({
     classId: "shell",
@@ -522,6 +555,7 @@ export function runSmoke() {
     readStaysDefer: { decision: readHook.decision },
     loopStopWins: { decision: loopStopWins.decision },
     unmapped: { decision: unmapped.decision, reason: unmapped.reason },
+    decisionLog: { path: decisionPath, lines: 1 },
   };
   const found = [];
   const walk = (value) => {

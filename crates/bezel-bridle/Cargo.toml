@@ -1,0 +1,12 @@
+[package]
+name = "bezel-bridle"
+version = "0.1.0"
+edition = "2021"
+description = "Bridle for a coding harness. Not the harness. Not the crates.io crate `bezel`."
+license = "MIT"
+repository = "https://github.com/VirtualMachinist/bezel"
+readme = "README.md"
+keywords = ["harness", "bridle"]
+
+[lib]
+path = "src/lib.rs"

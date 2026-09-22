@@ -98,13 +98,16 @@ jobs:
       - name: build overlay packages (skip 180–240MB pin)
         if: ${{ !matrix.skip }}
         run: |
-          nix build -L .#bezel .#bezel-jev .#cursor-agent-bezel .#grok-build-bezel
-          test -x result/bin/bezel
-          test -x result/bin/omapi
-          test -x result-2/bin/bezel-jev
-          test -x result-2/bin/jev-router
-          test -x result-3/bin/cursor-agent-bezel
-          test -x result-4/bin/grok-build-bezel
+          mapfile -t outs < <(nix build -L --no-link --print-out-paths .#bezel .#bezel-jev .#cursor-agent-bezel .#grok-build-bezel)
+          test "${#outs[@]}" -eq 4
+          test -x "${outs[0]}/bin/bezel"
+          test -x "${outs[0]}/bin/omapi"
+          test -x "${outs[1]}/bin/bezel-jev"
+          test -x "${outs[1]}/bin/jev-router"
+          test -x "${outs[2]}/bin/cursor-agent-bezel"
+          test -x "${outs[2]}/bin/cursor-agent-jev"
+          test -x "${outs[3]}/bin/grok-build-bezel"
+          test -x "${outs[3]}/bin/grok-build-jev"
           echo "bezel-pinned fetchurl skipped on GHA (build_bezel_pin=${{ matrix.build_bezel_pin }}; 180–240MB). Pin hashes are in packages/omp-pin.nix."
 
       - name: build bezel-pinned

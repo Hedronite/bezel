@@ -2,7 +2,7 @@
 
 Bezel is a harness overlay. It supplements an agent harness you already run with skills, a Jev toolkit, and gate adapters. You keep the harness. This repository does not include harness source.
 
-[![CI](https://img.shields.io/github/actions/workflow/status/VirtualMachinist/omapi-overlay/ci.yml?branch=main&style=flat&colorA=222222&colorB=3FB950)](https://github.com/VirtualMachinist/omapi-overlay/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/VirtualMachinist/bezel/ci.yml?branch=main&style=flat&colorA=222222&colorB=3FB950)](https://github.com/VirtualMachinist/bezel/actions/workflows/ci.yml)
 [![MIT license](https://img.shields.io/badge/License-MIT-58A6FF?style=flat&colorA=222222)](#license)
 [![Nix](https://img.shields.io/badge/Nix-5277C3?style=flat&colorA=222222&logo=nixos&logoColor=white)](https://nixos.org)
 [![Node](https://img.shields.io/badge/Node-339933?style=flat&colorA=222222&logo=nodedotjs&logoColor=white)](https://nodejs.org)
@@ -65,11 +65,11 @@ nix build .#bezel-pinned
 
 ### Flake input (Home Manager)
 
-The product name is Bezel. The GitHub repository name is separate. It may still be `omapi-overlay` until that repository is renamed. Point the input at this flake:
+The product name is Bezel. The repository is [VirtualMachinist/bezel](https://github.com/VirtualMachinist/bezel). An input that still says `omapi-overlay` follows GitHub's redirect.
 
 ```nix
 {
-  inputs.bezel.url = "github:VirtualMachinist/omapi-overlay";
+  inputs.bezel.url = "github:VirtualMachinist/bezel";
 }
 
 {
@@ -221,5 +221,5 @@ MIT. `bezel-pinned` downloads published binaries from [oh-my-pi](https://github.
 
 Bezel is not Omarchy and not Omahedron.
 
-- This repository. The GitHub slug may still be `omapi-overlay` until it is renamed.
+- [This repository](https://github.com/VirtualMachinist/bezel)
 - [oh-my-pi releases](https://github.com/can1357/oh-my-pi/releases/tag/v18.2.6)

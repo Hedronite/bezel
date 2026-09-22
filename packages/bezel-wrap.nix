@@ -52,6 +52,7 @@ stdenvNoCC.mkDerivation {
 
   meta = {
     description = "Bezel command that runs upstream omp with the Bezel toolkit on PATH";
+    homepage = "https://github.com/VirtualMachinist/bezel";
     mainProgram = "bezel";
     license = lib.licenses.mit;
     platforms = ompBinary.meta.platforms or lib.platforms.unix;

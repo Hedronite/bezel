@@ -31,10 +31,14 @@ pub use harness::{
     decide_hook, hook_command, hook_on_text, hook_stdout, modes_from_env, parse_hook_event, HookEvent, Modes,
 };
 pub use loop_stop::{apply_loop_stop_thresholds, LoopStopDecision};
-pub use permission::{active_hook, write_from_flags, WriteVerdict};
+pub use permission::{
+    active_hook, apply_permission_verdict, decide_permission, write_from_flags, PermissionInput,
+    PermissionParent, PermissionVerdict, TypedPermission, WriteVerdict,
+};
 pub use router::bash_no_key;
 pub use policy::{
-    hook_decision, match_pretool_class, pretool_hook_decision, pretool_stamp, GateVerdict, HookOut, AUTO_ALLOW,
+    hook_decision, match_pretool_class, pretool_hook_decision, pretool_stamp, GateVerdict, HookOut,
+    SurfaceVerdict, AUTO_ALLOW,
     CHECK_POLICY_ID, CONCERN_PARK, MAX_HUNK_CHARS, LOOP_STOP_MIN_CONFIDENCE, LOOP_STOP_MIN_MARGIN, LOOP_STOP_MIN_PROBABILITY,
     LOOP_STOP_POLICY_ID, ROUTING_POLICY_ID, WRITE_CODE_DENY_FLAGS,
 };
@@ -213,6 +217,632 @@ mod tests {
         assert_eq!(verdict.mapped, "stop");
         assert!(verdict.code_deny);
         assert_ne!(verdict.mapped, "continue");
+    }
+
+    fn permission_golden(name: &str) -> String {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/jev-router/testdata/permission")
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()))
+    }
+
+    fn permission_input(
+        class_id: &'static str,
+        requested_mode: &'static str,
+        has_key: bool,
+        content_present: bool,
+        label: Option<&'static str>,
+        confidence: f64,
+        allow_p: f64,
+        deny_p: f64,
+        ask_p: f64,
+        path: &'static str,
+    ) -> PermissionInput<'static> {
+        PermissionInput {
+            class_id,
+            requested_mode,
+            has_key,
+            content_present,
+            label,
+            confidence,
+            allow_p,
+            deny_p,
+            ask_p,
+            path,
+            diff: "",
+            concern: None,
+            flags: None,
+            tool_name: "",
+            effect: "",
+            routing_outcome: None,
+            typed: None,
+        }
+    }
+
+    fn assert_permission(name: &str, verdict: &PermissionVerdict) {
+        assert_eq!(verdict.json, permission_golden(name), "{name}");
+        assert!(!verdict.auto_allow, "{name}");
+        assert!(!verdict.json.contains("F454"), "{name}");
+        assert!(!verdict.json.contains("\"decision\":\"allow\""), "{name}");
+    }
+
+    #[test]
+    fn g1_permission_surface_matches_permission_mjs() {
+        let src = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/permission.rs"))
+            .unwrap();
+        assert!(!src.contains("JEV_MODE"));
+        assert!(!src.contains("F454"));
+
+        assert!(decide_permission(&permission_input(
+            "web", "active", true, false, Some("allow"), 0.0, 0.0, 0.0, 0.0, ""
+        ))
+        .is_none());
+        assert_eq!(permission_golden("unknown-web.json"), "null");
+        assert!(decide_permission(&permission_input(
+            "read_file", "active", true, false, None, 0.0, 0.0, 0.0, 0.0, ""
+        ))
+        .is_none());
+        assert_eq!(permission_golden("unknown-read-file.json"), "null");
+
+        let missing = decide_permission(&permission_input(
+            "shell",
+            "active",
+            false,
+            true,
+            Some("deny"),
+            0.99,
+            0.01,
+            0.98,
+            0.01,
+            "",
+        ))
+        .unwrap();
+        assert_permission("shell-missing-key.json", &missing);
+        assert_eq!(missing.mode, "shadow");
+        assert!(!missing.honor);
+        assert_eq!(missing.choice, "unclassified");
+
+        let denied = decide_permission(&permission_input(
+            "write",
+            "active",
+            false,
+            false,
+            Some("allow"),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            ".env",
+        ))
+        .unwrap();
+        assert_permission("write-missing-key-deny.json", &denied);
+        assert_eq!(denied.mode, "shadow");
+        assert!(denied.json.contains("\"codeDeny\":true"));
+        assert!(denied.json.contains("\"mapped\":\"stop\""));
+        assert!(denied.json.contains("\"reason\":\"secret_path\""));
+        assert_eq!(denied.choice, "unclassified");
+        assert!(!denied.blocked);
+
+        let mcp = decide_permission(&permission_input(
+            "mcp", "active", false, false, None, 0.0, 0.0, 0.0, 0.0, ""
+        ))
+        .unwrap();
+        assert_permission("mcp-missing-key.json", &mcp);
+        assert_eq!(mcp.mode, "shadow");
+        assert_eq!(mcp.policy_id, ROUTING_POLICY_ID);
+
+        let shadow = decide_permission(&permission_input(
+            "shell", "yes", true, true, Some("allow"), 0.9, 0.8, 0.1, 0.1, ""
+        ))
+        .unwrap();
+        assert_permission("shell-shadow-default.json", &shadow);
+        assert_eq!(shadow.mode, "shadow");
+        assert!(!shadow.honor);
+        assert!(shadow.json.contains("\"mapped\":\"continue\""));
+
+        let continued = decide_permission(&permission_input(
+            "shell", "active", true, true, Some("allow"), 0.9, 0.8, 0.1, 0.1, ""
+        ))
+        .unwrap();
+        assert_permission("shell-active-continue.json", &continued);
+        let kept = apply_permission_verdict(
+            PermissionParent {
+                choice: "stop",
+                gate: "hold",
+                blocked: true,
+                exec: false,
+                hitl: Some(false),
+                mode: "active",
+            },
+            &continued,
+        );
+        assert_eq!(kept, permission_golden("continue-keeps-parent-stop.json"));
+        assert!(kept.contains("\"choice\":\"stop\""));
+        assert!(kept.contains("\"autoAllow\":false"));
+        let kept_hook = pretool_hook_decision(&GateVerdict {
+            bypass: false,
+            mode: "active".to_string(),
+            choice: Some("stop".to_string()),
+            gate: Some("hold".to_string()),
+            blocked: true,
+            policy_id: String::new(),
+            permission: Some(SurfaceVerdict {
+                honor: continued.honor,
+                mode: continued.mode.to_string(),
+                choice: continued.choice.to_string(),
+                gate: continued.gate.to_string(),
+                blocked: continued.blocked,
+                policy_id: continued.policy_id.to_string(),
+            }),
+            calls: None,
+        });
+        assert_eq!(kept_hook.decision, "deny");
+        assert_ne!(kept_hook.decision, "allow");
+        assert_eq!(
+            format!(
+                r#"{{"action":"deny","exitCode":2,"decision":"deny","reason":"{}"}}"#,
+                kept_hook.reason
+            ),
+            permission_golden("continue-keeps-parent-stop-hook.json")
+        );
+
+        let shadow_deny = decide_permission(&permission_input(
+            "shell", "shadow", true, true, Some("deny"), 0.9, 0.05, 0.9, 0.05, ""
+        ))
+        .unwrap();
+        assert_permission("shell-shadow-deny.json", &shadow_deny);
+        let logged = apply_permission_verdict(
+            PermissionParent {
+                choice: "continue",
+                gate: "auto",
+                blocked: false,
+                exec: true,
+                hitl: None,
+                mode: "shadow",
+            },
+            &shadow_deny,
+        );
+        assert_eq!(logged, permission_golden("shadow-keeps-parent.json"));
+        assert!(logged.contains("\"choice\":\"continue\""));
+        assert!(!logged.contains("\"choice\":\"stop\""));
+        let logged_hook = pretool_hook_decision(&GateVerdict {
+            bypass: false,
+            mode: "shadow".to_string(),
+            choice: Some("continue".to_string()),
+            gate: Some("auto".to_string()),
+            blocked: false,
+            policy_id: String::new(),
+            permission: Some(SurfaceVerdict {
+                honor: shadow_deny.honor,
+                mode: shadow_deny.mode.to_string(),
+                choice: shadow_deny.choice.to_string(),
+                gate: shadow_deny.gate.to_string(),
+                blocked: shadow_deny.blocked,
+                policy_id: shadow_deny.policy_id.to_string(),
+            }),
+            calls: None,
+        });
+        assert_eq!(logged_hook.decision, "defer");
+        assert_ne!(logged_hook.decision, "allow");
+        assert_eq!(logged_hook.reason, "shadow");
+
+        let honoring = pretool_hook_decision(&GateVerdict {
+            bypass: false,
+            mode: "shadow".to_string(),
+            choice: Some("continue".to_string()),
+            gate: Some("auto".to_string()),
+            blocked: false,
+            policy_id: String::new(),
+            permission: Some(SurfaceVerdict {
+                honor: continued.honor,
+                mode: continued.mode.to_string(),
+                choice: continued.choice.to_string(),
+                gate: continued.gate.to_string(),
+                blocked: continued.blocked,
+                policy_id: continued.policy_id.to_string(),
+            }),
+            calls: None,
+        });
+        assert_eq!(honoring.decision, "defer");
+        assert_eq!(honoring.reason, "exec");
+        assert_ne!(honoring.decision, "allow");
+    }
+
+    fn write_input<'a>(
+        requested_mode: &'static str,
+        label: Option<&'static str>,
+        path: &'a str,
+        diff: &'a str,
+        concern: Option<f64>,
+    ) -> PermissionInput<'a> {
+        PermissionInput {
+            class_id: "write",
+            requested_mode,
+            has_key: true,
+            content_present: false,
+            label,
+            confidence: 0.0,
+            allow_p: 0.0,
+            deny_p: 0.0,
+            ask_p: 0.0,
+            path,
+            diff,
+            concern,
+            flags: None,
+            tool_name: "",
+            effect: "",
+            routing_outcome: None,
+            typed: None,
+        }
+    }
+
+    fn hook_of(mode: &str, choice: &str, gate: &str, blocked: bool, verdict: &PermissionVerdict) -> crate::policy::HookOut {
+        pretool_hook_decision(&GateVerdict {
+            bypass: false,
+            mode: mode.to_string(),
+            choice: Some(choice.to_string()),
+            gate: Some(gate.to_string()),
+            blocked,
+            policy_id: String::new(),
+            permission: Some(SurfaceVerdict {
+                honor: verdict.honor,
+                mode: verdict.mode.to_string(),
+                choice: verdict.choice.to_string(),
+                gate: verdict.gate.to_string(),
+                blocked: verdict.blocked,
+                policy_id: verdict.policy_id.to_string(),
+            }),
+            calls: None,
+        })
+    }
+
+    #[test]
+    fn g2_write_flags_beat_allow_and_empty_findings_are_not_approval() {
+        let docs = "diff --git a/notes/a.md b/notes/a.md\n--- a/notes/a.md\n+++ b/notes/a.md\n@@\n-old\n+new paragraph";
+        let deleted = "diff --git a/src/math.test.js b/src/math.test.js\ndeleted file mode 100644\nindex 1111111..0000000\n--- a/src/math.test.js\n+++ /dev/null\n@@ -1 +0,0 @@\n-const value = 1;";
+        let skip = testdata("skip-marker.diff");
+        let assertions = testdata("assertions-removed.diff");
+
+        let secret = write_input("active", Some("allow"), ".env", docs, Some(0.2));
+        let stopped = decide_permission(&secret).unwrap();
+        assert_permission("write-secret-path.json", &stopped);
+        assert_eq!(stopped.choice, "stop");
+        assert!(stopped.json.contains("\"modelLabel\":\"allow\""));
+        assert!(stopped.json.contains("\"reason\":\"secret_path\""));
+        assert_ne!(hook_of("active", "continue", "auto", false, &stopped).decision, "allow");
+
+        let skip_in = write_input("active", Some("allow"), "", &skip, Some(0.2));
+        assert_permission("write-skip-marker.json", &decide_permission(&skip_in).unwrap());
+        let assert_in = write_input("active", Some("allow"), "", &assertions, Some(0.2));
+        assert_permission("write-assertions-removed.json", &decide_permission(&assert_in).unwrap());
+        let deleted_in = write_input("active", Some("allow"), "", deleted, Some(0.2));
+        let deleted_verdict = decide_permission(&deleted_in).unwrap();
+        assert_permission("write-test-file-deleted.json", &deleted_verdict);
+        assert!(deleted_verdict.json.contains("\"codeDeny\":true"));
+        assert!(!deleted_verdict.json.contains("F454"));
+
+        let below = decide_permission(&write_input("active", Some("allow"), "notes/a.md", docs, Some(0.2))).unwrap();
+        assert_permission("write-below-park.json", &below);
+        assert_eq!(below.choice, "continue");
+        assert!(below.json.contains("\"reason\":\"below_park\""));
+        let zero = decide_permission(&write_input("active", Some("allow"), "notes/a.md", docs, Some(0.0))).unwrap();
+        assert_permission("write-below-park-zero.json", &zero);
+        let below_plain = decide_permission(&write_input("active", None, "notes/a.md", docs, Some(0.2))).unwrap();
+        assert_eq!(below_plain.choice, "continue");
+        assert!(below_plain.json.contains("\"modelLabel\":null"));
+        let kept = apply_permission_verdict(
+            PermissionParent {
+                choice: "stop",
+                gate: "hold",
+                blocked: true,
+                exec: false,
+                hitl: Some(false),
+                mode: "active",
+            },
+            &below_plain,
+        );
+        assert_eq!(kept, permission_golden("write-below-park-keeps-stop.json"));
+        assert!(kept.contains("\"choice\":\"stop\""));
+        let kept_hook = hook_of("active", "stop", "hold", true, &below_plain);
+        assert_eq!(kept_hook.decision, "deny");
+        assert_ne!(kept_hook.decision, "allow");
+        assert_eq!(
+            format!(
+                r#"{{"action":"deny","exitCode":2,"decision":"deny","reason":"{}"}}"#,
+                kept_hook.reason
+            ),
+            permission_golden("write-below-park-keeps-stop-hook.json")
+        );
+
+        let at_bar = decide_permission(&write_input("active", Some("allow"), "notes/a.md", docs, Some(0.4))).unwrap();
+        assert_permission("write-at-park.json", &at_bar);
+        assert_ne!(at_bar.choice, "continue");
+        let absent = decide_permission(&write_input("active", Some("allow"), "notes/a.md", docs, None)).unwrap();
+        assert_ne!(absent.choice, "continue");
+        assert!(absent.json.contains("\"reason\":\"empty_findings_not_approval\""));
+        let nan = decide_permission(&write_input("active", Some("allow"), "src/app.js", "", Some(f64::NAN))).unwrap();
+        assert_ne!(nan.choice, "continue");
+
+        let empty = decide_permission(&write_input("active", Some("allow"), "src/app.js", "", None)).unwrap();
+        assert_permission("write-empty.json", &empty);
+        assert!(empty.json.contains("\"reason\":\"empty_findings_not_approval\""));
+        assert!(empty.json.contains("\"mapped\":\"writer\""));
+        assert_ne!(empty.choice, "continue");
+        let empty_hook = hook_of("active", "continue", "auto", false, &empty);
+        assert_eq!(empty_hook.decision, "deny");
+        assert_ne!(empty_hook.decision, "allow");
+        assert_eq!(
+            format!(
+                r#"{{"action":"deny","exitCode":2,"decision":"deny","reason":"{}"}}"#,
+                empty_hook.reason
+            ),
+            permission_golden("write-empty-hook.json")
+        );
+        assert!(!empty.json.contains("\"approval\":true"));
+
+        let shadow_empty = decide_permission(&write_input("shadow", None, "src/app.js", "", None)).unwrap();
+        assert_permission("write-shadow-empty.json", &shadow_empty);
+        assert!(!shadow_empty.honor);
+        assert!(!shadow_empty.blocked);
+        assert_eq!(shadow_empty.choice, "unclassified");
+    }
+
+    fn shell_hook(mode: &str, verdict: &PermissionVerdict) -> String {
+        let hook = hook_of(mode, "continue", "auto", false, verdict);
+        assert_ne!(hook.decision, "allow");
+        format!(
+            r#"{{"action":"{}","exitCode":{},"decision":"{}","reason":"{}"}}"#,
+            if hook.decision == "deny" { "deny" } else { "defer" },
+            hook.exit_code,
+            hook.decision,
+            hook.reason,
+        )
+    }
+
+    #[test]
+    fn g3_shell_asks_without_content_and_under_the_loop_stop_bars() {
+        assert_eq!(LOOP_STOP_MIN_CONFIDENCE, 0.6);
+        assert_eq!(LOOP_STOP_MIN_PROBABILITY, 0.55);
+        assert_eq!(LOOP_STOP_MIN_MARGIN, 0.15);
+
+        let no_content = decide_permission(&permission_input(
+            "shell", "active", true, false, Some("allow"), 0.9, 0.8, 0.1, 0.1, "",
+        ))
+        .unwrap();
+        assert_permission("shell-no-content.json", &no_content);
+        assert_eq!(no_content.choice, "escalate");
+        assert_ne!(no_content.choice, "continue");
+        assert!(no_content.json.contains("\"reason\":\"no_content\""));
+        assert_eq!(shell_hook("active", &no_content), permission_golden("shell-no-content-hook.json"));
+
+        let at_bars = decide_permission(&permission_input(
+            "shell", "active", true, true, Some("allow"), 0.6, 0.55, 0.4, 0.05, "",
+        ))
+        .unwrap();
+        assert_permission("shell-at-bars.json", &at_bars);
+        assert_eq!(at_bars.choice, "continue");
+        assert_eq!(at_bars.json.contains("\"reason\":\"selected\""), true);
+        assert_eq!(shell_hook("shadow", &at_bars), permission_golden("shell-at-bars-hook.json"));
+
+        let under = decide_permission(&permission_input(
+            "shell", "active", true, true, Some("allow"), 0.4, 0.4, 0.35, 0.25, "",
+        ))
+        .unwrap();
+        assert_permission("shell-under-bars.json", &under);
+        assert_eq!(under.choice, "escalate");
+        assert_ne!(under.choice, "continue");
+        assert!(under.json.contains("\"reason\":\"model_uncertain\""));
+        assert_eq!(shell_hook("active", &under), permission_golden("shell-under-bars-hook.json"));
+
+        let abstain = decide_permission(&permission_input(
+            "shell", "active", true, true, Some("cannot_tell"), 0.9, 0.1, 0.0, 0.0, "",
+        ))
+        .unwrap();
+        assert_permission("shell-cannot-tell.json", &abstain);
+        assert_eq!(abstain.choice, "escalate");
+        assert_ne!(abstain.choice, "continue");
+        assert!(abstain.json.contains("\"reason\":\"cannot_tell\""));
+        assert_eq!(shell_hook("active", &abstain), permission_golden("shell-cannot-tell-hook.json"));
+
+        let ask = decide_permission(&permission_input(
+            "shell", "active", true, true, Some("ask"), 0.2, 0.2, 0.2, 0.6, "",
+        ))
+        .unwrap();
+        assert_permission("shell-ask-under-bars.json", &ask);
+        assert_eq!(ask.choice, "escalate");
+        assert!(ask.hitl);
+        assert_ne!(ask.choice, "continue");
+        assert!(!ask.json.contains("\"decision\":\"allow\""));
+    }
+
+    fn mcp_input<'a>(
+        label: Option<&'static str>,
+        confidence: f64,
+        allow_p: f64,
+        deny_p: f64,
+        ask_p: f64,
+        tool_name: &'a str,
+        effect: &'a str,
+        routing_outcome: Option<&'a str>,
+        typed: Option<TypedPermission<'a>>,
+    ) -> PermissionInput<'a> {
+        PermissionInput {
+            class_id: "mcp",
+            requested_mode: "active",
+            has_key: true,
+            content_present: false,
+            label,
+            confidence,
+            allow_p,
+            deny_p,
+            ask_p,
+            path: "",
+            diff: "",
+            concern: None,
+            flags: None,
+            tool_name,
+            effect,
+            routing_outcome,
+            typed,
+        }
+    }
+
+    fn facet_typed(honor: bool) -> TypedPermission<'static> {
+        TypedPermission {
+            honor,
+            policy_id: ROUTING_POLICY_ID,
+            transport: "facet",
+            mapped: "continue",
+            reason: "selected",
+            code_deny: false,
+            name: "",
+            effect: "",
+        }
+    }
+
+    #[test]
+    fn g4_mcp_read_follows_loop_stop_and_workflow_does_not_continue() {
+        let mutate = decide_permission(&mcp_input(
+            Some("allow"),
+            0.9,
+            0.8,
+            0.1,
+            0.1,
+            "linear__save_issue",
+            "write",
+            None,
+            None,
+        ))
+        .unwrap();
+        assert_permission("mcp-mutate-write.json", &mutate);
+        assert_eq!(mutate.choice, "escalate");
+        assert!(mutate.json.contains("\"reason\":\"mutating_mcp\""));
+        assert_ne!(mutate.choice, "continue");
+        assert_eq!(shell_hook("active", &mutate), permission_golden("mcp-mutate-write-hook.json"));
+
+        let named = decide_permission(&mcp_input(
+            Some("allow"),
+            0.9,
+            0.8,
+            0.1,
+            0.1,
+            "notes__add",
+            "",
+            None,
+            None,
+        ))
+        .unwrap();
+        assert_permission("mcp-mutate-name.json", &named);
+        assert!(named.json.contains("\"reason\":\"mutating_mcp\""));
+        let effect_wins = decide_permission(&mcp_input(
+            Some("allow"),
+            0.9,
+            0.8,
+            0.1,
+            0.1,
+            "lapis__search",
+            "write",
+            None,
+            None,
+        ))
+        .unwrap();
+        assert_permission("mcp-effect-beats-name.json", &effect_wins);
+        assert_eq!(effect_wins.choice, "escalate");
+
+        let read = decide_permission(&mcp_input(
+            Some("allow"),
+            0.9,
+            0.8,
+            0.1,
+            0.1,
+            "linear__list_issues",
+            "read",
+            None,
+            None,
+        ))
+        .unwrap();
+        assert_permission("mcp-read-list.json", &read);
+        assert_eq!(read.choice, "continue");
+        assert_eq!(read.policy_id, ROUTING_POLICY_ID);
+        assert!(read.json.contains("\"reason\":\"selected\""));
+        assert!(!read.json.contains("workflow_is_not_permission"));
+        assert_eq!(shell_hook("shadow", &read), permission_golden("mcp-read-list-hook.json"));
+        assert_ne!(shell_hook("shadow", &read).contains("\"decision\":\"allow\""), true);
+
+        let search = decide_permission(&mcp_input(
+            Some("allow"),
+            0.9,
+            0.8,
+            0.1,
+            0.1,
+            "lapis__search",
+            "",
+            None,
+            Some(TypedPermission {
+                honor: false,
+                policy_id: "",
+                transport: "",
+                mapped: "escalate",
+                reason: "no_catalog",
+                code_deny: false,
+                name: "",
+                effect: "",
+            }),
+        ))
+        .unwrap();
+        assert_permission("mcp-lapis-search.json", &search);
+        assert_eq!(search.choice, "continue");
+        assert!(!search.json.contains("no_catalog"));
+        assert!(!search.json.contains("workflow_is_not_permission"));
+
+        let bare = decide_permission(&mcp_input(None, 0.0, 0.0, 0.0, 0.0, "lapis__search", "", None, None)).unwrap();
+        assert_permission("mcp-lapis-bare.json", &bare);
+        assert_ne!(bare.choice, "continue");
+        assert_eq!(bare.json.contains("\"label\":\"ask\""), true);
+        assert!(!bare.json.contains("workflow_is_not_permission"));
+
+        let workflow = decide_permission(&mcp_input(Some("allow"), 0.0, 0.0, 0.0, 0.0, "", "", Some("check"), None)).unwrap();
+        assert_permission("mcp-workflow.json", &workflow);
+        assert_eq!(workflow.choice, "escalate");
+        assert!(workflow.json.contains("\"reason\":\"workflow_is_not_permission\""));
+        assert_ne!(workflow.choice, "continue");
+        assert_eq!(shell_hook("active", &workflow), permission_golden("mcp-workflow-hook.json"));
+
+        let adopted = decide_permission(&mcp_input(
+            Some("allow"),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            "linear__list_issues",
+            "read",
+            Some("check"),
+            Some(facet_typed(true)),
+        ))
+        .unwrap();
+        assert_permission("mcp-typed-facet.json", &adopted);
+        assert_eq!(adopted.choice, "continue");
+        assert_eq!(adopted.policy_id, ROUTING_POLICY_ID);
+        assert!(adopted.json.contains("\"reason\":\"selected\""));
+        assert!(!adopted.json.contains("workflow_is_not_permission"));
+        assert!(!adopted.auto_allow);
+
+        let still_ask = decide_permission(&mcp_input(
+            None,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            "linear__list_issues",
+            "read",
+            Some("check"),
+            Some(facet_typed(false)),
+        ))
+        .unwrap();
+        assert_permission("mcp-typed-not-honor.json", &still_ask);
+        assert_ne!(still_ask.choice, "continue");
+        assert!(still_ask.json.contains("\"reason\":\"cannot_tell\""));
+        assert!(!still_ask.json.contains("workflow_is_not_permission"));
     }
 
     #[test]

@@ -197,6 +197,70 @@ pub fn deterministic_flags(hunk: &Hunk) -> Vec<String> {
     flags
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OfflineCheck {
+    pub status: &'static str,
+    pub approval: bool,
+    pub empty_findings_are_not_approval: bool,
+    pub workflow: &'static str,
+    pub policy: &'static str,
+    pub findings: Vec<String>,
+    pub mentions_no_diff: bool,
+}
+
+/// Offline `--check`. No judge, no client. `approval` stays false.
+pub fn run_offline_check(diff: &str) -> OfflineCheck {
+    let hunks = parse_unified_diff(diff);
+    if diff.trim().is_empty() || hunks.is_empty() {
+        return OfflineCheck {
+            status: "no_diff",
+            approval: false,
+            empty_findings_are_not_approval: true,
+            workflow: "check",
+            policy: crate::policy::CHECK_POLICY_ID,
+            findings: Vec::new(),
+            mentions_no_diff: true,
+        };
+    }
+    let mut findings = Vec::new();
+    for hunk in &hunks {
+        for flag in deterministic_flags(hunk) {
+            if !findings.iter().any(|got| got == &flag) {
+                findings.push(flag);
+            }
+        }
+    }
+    OfflineCheck {
+        status: "incomplete",
+        approval: false,
+        empty_findings_are_not_approval: true,
+        workflow: "check",
+        policy: crate::policy::CHECK_POLICY_ID,
+        findings,
+        mentions_no_diff: false,
+    }
+}
+
+pub fn offline_check_json(report: &OfflineCheck) -> String {
+    let findings = report
+        .findings
+        .iter()
+        .map(|flag| format!(r#"{{"flag":"{flag}","source":"deterministic"}}"#))
+        .collect::<Vec<_>>()
+        .join(",");
+    let no_diff = if report.mentions_no_diff {
+        r#","notChecked":["no git diff — check unavailable"]"#
+    } else {
+        ""
+    };
+    format!(
+        r#"{{"ok":true,"workflow":"{workflow}","policy":"{policy}","missingKey":true,"approval":false,"emptyFindingsAreNotApproval":true,"status":"{status}","findings":[{findings}]{no_diff}}}"#,
+        workflow = report.workflow,
+        policy = report.policy,
+        status = report.status,
+    )
+}
+
 pub fn check_envelope(diff: &str) -> CheckReport {
     let hunks = parse_unified_diff(diff);
     if diff.trim().is_empty() || hunks.is_empty() {

@@ -2,13 +2,20 @@
 //!
 //! Pure core: `policy`, `check`, `permission`, `loop_stop`. No network. No client.
 
+mod catalog;
 mod check;
+mod cli;
 mod harness;
 mod loop_stop;
 mod permission;
 mod policy;
 
-pub use check::{check_envelope, deterministic_flags, file_kind, parse_unified_diff, write_flags, CheckReport, Hunk};
+pub use catalog::{schema_dump_json, tiny_catalog_json};
+pub use check::{
+    check_envelope, deterministic_flags, file_kind, offline_check_json, parse_unified_diff, run_offline_check,
+    write_flags, CheckReport, Hunk, OfflineCheck,
+};
+pub use cli::run as cli_run;
 pub use harness::{decide_hook, hook_on_text, hook_stdout, modes_from_env, parse_hook_event, HookEvent, Modes};
 pub use loop_stop::{apply_loop_stop_thresholds, LoopStopDecision};
 pub use permission::{active_hook, write_from_flags, WriteVerdict};
@@ -362,5 +369,84 @@ mod tests {
             assert_eq!(continued.decision, "defer");
             assert_hook(&continued);
         }
+    }
+
+    fn arg(text: &str) -> String {
+        text.to_string()
+    }
+
+    #[test]
+    fn g3_catalog_schema_and_check_match_the_offline_oracle() {
+        let (code, catalog) = cli_run(&[arg("--catalog")]);
+        assert_eq!(code, 0);
+        assert!(catalog.contains("\"kind\":\"tiny\""));
+        assert!(catalog.contains("\"tools\":[\"Bash\",\"run_terminal_command\",\"run_terminal_cmd\"]"));
+        assert!(catalog.contains("\"pattern\":\"[A-Za-z0-9][A-Za-z0-9_.-]*__[A-Za-z0-9_.-]+\""));
+        assert!(!catalog.contains("$schema"));
+        assert!(!catalog.contains("properties"));
+        assert!(!catalog.contains("\"decision\":\"allow\""));
+        assert!(catalog.len() < 900);
+
+        let (code, bash) = cli_run(&[arg("--schema"), arg("Bash")]);
+        assert_eq!(code, 0);
+        assert!(bash.contains("\"call\":\"schema-dump\""));
+        assert!(bash.contains("\"decision\":\"defer\""));
+        assert!(bash.contains("\"autoAllow\":false"));
+        assert!(bash.contains("\"class\":\"shell\""));
+        assert!(bash.contains("\"policyId\":\"omapi-loop-stop-policy@1\""));
+        assert!(bash.contains("\"required\":[\"command\"]"));
+        assert!(bash.contains("\"command\":{\"type\":\"string\""));
+        assert!(!bash.contains("\"decision\":\"allow\""));
+
+        let (code, edit) = cli_run(&[arg("--schema"), arg("search_replace")]);
+        assert_eq!(code, 0);
+        assert!(edit.contains("\"class\":\"write\""));
+        assert!(edit.contains("\"policyId\":\"omapi-check-policy@1\""));
+        assert!(edit.contains("\"decision\":\"defer\""));
+        assert!(edit.contains("\"autoAllow\":false"));
+
+        let (code, mcp) = cli_run(&[arg("--schema"), arg("linear__save_issue")]);
+        assert_eq!(code, 0);
+        assert!(mcp.contains("\"class\":\"mcp\""));
+        assert!(mcp.contains("\"policyId\":\"omapi-route-workflow-policy@1\""));
+        assert!(mcp.contains("\"typedCall\":false"));
+        assert!(mcp.contains("\"decision\":\"defer\""));
+        assert!(mcp.contains("\"required\":[\"server\",\"tool\"]"));
+
+        for name in ["read_file", "use_tool"] {
+            let (code, denied) = cli_run(&[arg("--schema"), arg(name)]);
+            assert_eq!(code, 2);
+            assert!(denied.contains("\"decision\":\"deny\""));
+            assert!(denied.contains("\"found\":false"));
+            assert!(denied.contains("\"schema\":null"));
+            assert!(denied.contains("\"autoAllow\":false"));
+            assert!(!denied.contains("\"decision\":\"allow\""));
+        }
+        let (code, missing) = cli_run(&[arg("--schema")]);
+        assert_eq!(code, 2);
+        assert!(missing.contains("\"tool\":null"));
+        assert!(missing.contains("\"decision\":\"deny\""));
+
+        let empty_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/jev-router/testdata/empty.diff");
+        let (code, empty) = cli_run(&[arg("--check"), arg("--diff-file"), arg(empty_path.to_str().unwrap())]);
+        assert_eq!(code, 0);
+        assert!(empty.contains("\"status\":\"no_diff\""));
+        assert!(empty.contains("\"approval\":false"));
+        assert!(empty.contains("\"emptyFindingsAreNotApproval\":true"));
+        assert!(empty.contains("no git diff"));
+        assert!(!empty.contains("\"approval\":true"));
+        assert!(!empty.to_lowercase().contains("approved"));
+
+        let skip_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/jev-router/testdata/skip-marker.diff");
+        let (code, skip) = cli_run(&[arg("--check"), arg("--diff-file"), arg(skip_path.to_str().unwrap())]);
+        assert_eq!(code, 0);
+        assert!(skip.contains("\"approval\":false"));
+        assert!(skip.contains("\"emptyFindingsAreNotApproval\":true"));
+        assert!(skip.contains("\"flag\":\"skip_marker_added\""));
+        assert!(skip.contains("\"workflow\":\"check\""));
+        assert!(!skip.contains("\"decision\":\"allow\""));
+        assert!(!skip.contains("\"approval\":true"));
     }
 }

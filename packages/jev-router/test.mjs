@@ -1737,11 +1737,11 @@ exec ${shQuote(process.execPath)} ${shQuote(script)} "$@"
     assert.equal(picked.facet.name, "Mcp.linear__list_issues");
     assert.equal(picked.facet.guard.decision, "allowed");
     assert.equal(picked.facet.initiated, false);
-    assert.equal(picked.canonical.tools.length, 2);
-    assert.ok(picked.canonical.tools.every((tool) => tool.effect === "read"));
+    assert.equal(picked.canonical.tools.length, 3);
+    assert.equal(picked.canonical.tools.filter((tool) => tool.effect === "read").length, 2);
     assert.equal(
-      picked.canonical.tools.some((tool) => tool.name === "Mcp.linear__save_issue"),
-      false,
+      picked.canonical.tools.some((tool) => tool.name === "Mcp.linear__save_issue" && tool.effect === "write"),
+      true,
     );
     const events = picked.artifact.provenance.events;
     assert.deepEqual(
@@ -1767,11 +1767,17 @@ exec ${shQuote(process.execPath)} ${shQuote(script)} "$@"
 
   test("typed calls deny side effects and do not promote the next tool", () => {
     assert.equal(guardEffect("read").allow, true);
-    assert.equal(guardEffect("write").code, "F454");
+    assert.equal(guardEffect("write").allow, true);
+    assert.equal(guardEffect("write").code, null);
+    assert.equal(guardEffect("filesystem").allow, true);
+    assert.equal(guardEffect("external").allow, true);
+    assert.equal(guardEffect("network").allow, true);
+    assert.equal(JSON.stringify(guardEffect("write")).includes("F454"), false);
+    assert.equal(JSON.stringify(guardEffect("filesystem")).includes("F454"), false);
+    assert.equal(JSON.stringify(guardEffect("network")).includes("F454"), false);
+    assert.equal(JSON.stringify(guardEffect("external")).includes("F454"), false);
     assert.equal(guardEffect("payment").allow, false);
-    assert.equal(guardEffect("filesystem").code, "F454");
-    assert.equal(guardEffect("external").allow, false);
-    assert.equal(guardEffect("network").code, "F454");
+    assert.equal(guardEffect("payment").code, "F454");
     assert.equal(guardEffect("").code, "F456");
     assert.equal(guardEffect("not-an-effect").code, "F456");
     assert.equal(guardEffect("x.acme.audit").allow, false);
@@ -1797,21 +1803,24 @@ exec ${shQuote(process.execPath)} ${shQuote(script)} "$@"
         probabilities: { linear__save_issue: 0.84, linear__list_issues: 0.16 },
       },
     });
-    assert.equal(denied.best, null);
-    assert.equal(denied.label, "deny");
-    assert.equal(denied.mapped, "stop");
-    assert.equal(denied.choice, "stop");
-    assert.equal(denied.blocked, true);
-    assert.equal(denied.code, "F454");
-    assert.equal(denied.codeDeny, true);
-    assert.equal(denied.reason, "effect_deny");
+    assert.equal(denied.label, "allow");
+    assert.equal(denied.mapped, "continue");
+    assert.equal(denied.choice, "continue");
+    assert.equal(denied.blocked, false);
+    assert.equal(denied.code, null);
+    assert.equal(denied.codeDeny, false);
+    assert.equal(denied.reason, "selected");
     assert.equal(denied.autoPromote, false);
-    assert.equal(denied.facet.guard.decision, "denied");
+    assert.equal(denied.autoAllow, false);
+    assert.equal(denied.initiated, false);
+    assert.equal(denied.best.initiated, false);
+    assert.equal(denied.best.effect, "write");
+    assert.equal(denied.facet.guard.decision, "allowed");
     assert.equal(denied.facet.initiated, false);
-    assert.equal(denied.facet.args && Object.keys(denied.facet.args).length, 0);
+    assert.equal(JSON.stringify(denied).includes("F454"), false);
     assert.equal(
       denied.canonical.tools.some((tool) => String(tool.name).includes("save")),
-      false,
+      true,
     );
 
     const invalid = decideTypedCalls({
@@ -1873,10 +1882,15 @@ exec ${shQuote(process.execPath)} ${shQuote(script)} "$@"
     });
     assert.equal(uncertain.reason, "model_uncertain");
     assert.equal(uncertain.label, "ask");
-    assert.equal(uncertain.mapped, "escalate");
+    assert.equal(uncertain.mapped, "ask");
     assert.equal(uncertain.best, null);
     assert.equal(uncertain.facet, null);
-    assert.equal(uncertain.blocked, true);
+    assert.equal(uncertain.blocked, false);
+    assert.equal(uncertain.hitl, false);
+    assert.match(uncertain.question, /confidence/);
+    assert.match(uncertain.question, /probability/);
+    assert.match(uncertain.question, /margin/);
+    assert.equal(JSON.stringify(uncertain).includes("F454"), false);
     assert.notEqual(uncertain.label, "allow");
 
     const abstain = decideTypedCalls({
@@ -1893,6 +1907,24 @@ exec ${shQuote(process.execPath)} ${shQuote(script)} "$@"
     assert.equal(abstain.honor, false);
     assert.equal(abstain.blocked, false);
     assert.equal(abstain.choice, "unclassified");
+
+    const human = decideTypedCalls({
+      catalog,
+      requestedMode: "active",
+      hasKey: true,
+      answer: {
+        choice: "cannot_tell",
+        confidence: 0.9,
+        probabilities: { cannot_tell: 0.9, linear__list_issues: 0.1 },
+      },
+    });
+    assert.equal(human.reason, "cannot_tell");
+    assert.equal(human.mapped, "escalate");
+    assert.equal(human.hitl, true);
+    assert.equal(human.blocked, true);
+    assert.match(human.hold, /detail=/);
+    assert.match(human.hold, /question=/);
+    assert.equal(JSON.stringify(human).includes("F454"), false);
 
     const openArg = decideTypedCalls({
       catalog,
@@ -2048,7 +2080,7 @@ exec ${shQuote(process.execPath)} ${shQuote(script)} "$@"
     assert.equal(deferred.reason, "exec");
     assert.notEqual(deferred.decision, "allow");
 
-    const denied = decideTypedCalls({
+    const writeCall = decideTypedCalls({
       catalog,
       requestedMode: "active",
       hasKey: true,
@@ -2058,13 +2090,53 @@ exec ${shQuote(process.execPath)} ${shQuote(script)} "$@"
         probabilities: { linear__save_issue: 0.85, linear__list_issues: 0.15 },
       },
     });
+    const writeKept = applyCallsVerdict(
+      { mode: "shadow", choice: "continue", gate: "auto", blocked: false, exec: true },
+      writeCall,
+    );
+    assert.equal(writeKept.choice, "continue");
+    assert.equal(writeKept.blocked, false);
+    assert.equal(writeKept.exec, true);
+    assert.equal(JSON.stringify(writeKept).includes("F454"), false);
+    const shadowWrite = decideTypedCalls({
+      catalog,
+      requestedMode: "shadow",
+      hasKey: true,
+      answer: {
+        choice: "linear__save_issue",
+        confidence: 0.9,
+        probabilities: { linear__save_issue: 0.85, linear__list_issues: 0.15 },
+      },
+    });
+    assert.equal(shadowWrite.mode, "shadow");
+    assert.equal(shadowWrite.honor, false);
+    assert.equal(shadowWrite.blocked, false);
+    assert.equal(shadowWrite.mapped, "continue");
+    assert.equal(JSON.stringify(shadowWrite).includes("F454"), false);
+
+    const payment = decideTypedCalls({
+      catalog: normalizeCatalog({
+        tools: [
+          { name: "pay__now", description: "Pay", effect: "payment", args: [] },
+          { name: "linear__list_issues", description: "List issues", effect: "read", args: [] },
+        ],
+      }),
+      requestedMode: "active",
+      hasKey: true,
+      answer: {
+        choice: "pay__now",
+        confidence: 0.9,
+        probabilities: { pay__now: 0.85, linear__list_issues: 0.15 },
+      },
+    });
     const stopped = applyCallsVerdict(
       { mode: "shadow", choice: "continue", gate: "auto", blocked: false, exec: true },
-      denied,
+      payment,
     );
     assert.equal(stopped.choice, "stop");
     assert.equal(stopped.blocked, true);
     assert.equal(stopped.exec, false);
+    assert.equal(payment.code, "F454");
     const deniedHook = pretoolHookDecision(stopped);
     assert.equal(deniedHook.decision, "deny");
     assert.match(deniedHook.reason, /policy=omapi-route-workflow-policy@1/);
@@ -2310,8 +2382,8 @@ exec ${shQuote(process.execPath)} ${shQuote(script)} "$@"
     assert.equal(report.bypass.decision, "defer");
     assert.equal(report.bypass.reason, "bypass");
     assert.equal(report.notBypass.decision, "deny");
-    assert.equal(report.irreversible.decision, "deny");
-    assert.equal(report.irreversible.code, "F454");
+    assert.equal(report.irreversible.decision, "defer");
+    assert.equal(report.irreversible.code, null);
     assert.equal(report.irreversible.initiated, false);
     assert.equal(report.uncertainActive.decision, "deny");
     assert.equal(report.uncertainShadow.decision, "defer");

@@ -10,11 +10,11 @@
  * The guard decision is made before any call. This process does not perform one.
  *
  * Host defaults (deterministic, tested):
- *   tool_call effect "read" → allow
- *   tool_call write | payment | filesystem | external | network → deny (F454)
+ *   obvious read | write | filesystem | network | external → continue, no F454
+ *   payment → deny (F454)
  *   missing or invalid effect → deny (F456)
  *   invalid function name → deny (F452), no OpDesc
- *   tool_expose "read" → allow and list it; every other effect is omitted
+ *   tool_expose lists those obvious effects; payment and unknown effects are omitted
  *
  * Code deny wins. A denied winner is not replaced by the next-best tool
  * (autoPromote is false). Uncertain, open args, empty catalog, and a missing
@@ -43,15 +43,15 @@ export const STATED_MIN = 0.5;
 export const FACET_IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
 export const NAMESPACED_EFFECT = /^x\.[A-Za-z_][A-Za-z0-9_.-]*$/;
 export const STANDARD_EFFECTS = ["read", "write", "external", "payment", "filesystem", "network"];
-export const DEFAULT_DENY_EFFECTS = ["write", "payment", "filesystem", "external", "network"];
-export const HOST_ALLOW_EFFECTS = ["read"];
+export const DEFAULT_DENY_EFFECTS = ["payment"];
+export const HOST_ALLOW_EFFECTS = ["read", "write", "filesystem", "network", "external"];
 
 const STANDARD_EFFECT_SET = new Set(STANDARD_EFFECTS);
 const SECRET_KEY = /^(typesafe_api_key|api_key|apikey|token|secret|password|authorization)$/i;
 
 /**
- * Effective policy hashed into the FACET artifact. Read is the only
- * documented default allow. It is not an auto-allow of the hook.
+ * Effective policy hashed into the FACET artifact. Obvious effects
+ * continue. Payment stays denied. It is not an auto-allow of the hook.
  */
 export const EFFECTIVE_POLICY = {
   tool_call: {
@@ -109,7 +109,8 @@ export function knownEffect(effect) {
 
 /**
  * tool_call guard for one declared effect.
- * allow is only the host default for "read".
+ * Obvious read, write, filesystem, network, and external continue.
+ * Payment and any other known effect stay denied.
  */
 export function guardEffect(effect) {
   if (effect == null || effect === "") {
@@ -118,14 +119,17 @@ export function guardEffect(effect) {
   if (!knownEffect(effect)) {
     return { allow: false, code: "F456", reason: "effect_invalid" };
   }
-  if (effect === "read") {
-    return { allow: true, code: null, reason: "host_default_allow_read" };
+  if (HOST_ALLOW_EFFECTS.includes(effect)) {
+    return { allow: true, code: null, reason: "obvious_effect" };
+  }
+  if (effect === "payment") {
+    return { allow: false, code: "F454", reason: "effect_deny" };
   }
   return { allow: false, code: "F454", reason: "effect_deny" };
 }
 
 function effectAllowsCall(effect) {
-  return knownEffect(effect) && effect === "read";
+  return knownEffect(effect) && HOST_ALLOW_EFFECTS.includes(effect);
 }
 
 function clipText(value, max) {
@@ -397,7 +401,7 @@ function exposeCatalog(catalog) {
     tools.push({
       name: qualified(catalog.interface, tool.name),
       description: tool.description,
-      effect: "read",
+      effect: tool.effect,
       parameters: {
         type: "object",
         properties,
@@ -525,6 +529,9 @@ function bits(honor, mapped) {
   if (mapped === "continue") {
     return { choice: "continue", gate: "auto", blocked: false, exec: true, hitl: false };
   }
+  if (mapped === "ask") {
+    return { choice: "unclassified", gate: "auto", blocked: false, exec: true, hitl: false };
+  }
   if (mapped === "stop") {
     return { choice: "stop", gate: "hold", blocked: true, exec: false, hitl: false };
   }
@@ -554,6 +561,8 @@ function packCalls(fields) {
     autoAllow: false,
     autoPromote: false,
     initiated: false,
+    ...(fields.question != null ? { question: fields.question } : {}),
+    ...(fields.hold != null ? { hold: fields.hold } : {}),
     topX: fields.topX,
     selected: fields.selected ?? null,
     best: fields.best ?? null,
@@ -587,6 +596,15 @@ function withCatalog(catalog, mode, topX, fields) {
  * Returns null only when the caller should omit the field. This function
  * always returns a calls object.
  */
+function agentQuestion(decision) {
+  const bars = [];
+  if (decision.confidence < ROUTING_POLICY.minConfidence) bars.push(`confidence ${ROUTING_POLICY.minConfidence}`);
+  if (decision.selectedProb < ROUTING_POLICY.minProbability) bars.push(`probability ${ROUTING_POLICY.minProbability}`);
+  if (decision.margin < ROUTING_POLICY.minMargin) bars.push(`margin ${ROUTING_POLICY.minMargin}`);
+  const named = bars.length ? bars.join(", ") : "confidence 0.6, probability 0.55, or margin 0.15";
+  return `Ask the agent: ${named} not met.`;
+}
+
 export function decideTypedCalls({
   catalog = null,
   catalogError = null,
@@ -666,13 +684,19 @@ export function decideTypedCalls({
 
   if (decision.outcome === "cannot_tell") {
     const unknown = decision.reason === "unavailable";
+    const agent = decision.reason === "model_uncertain";
+    const human = decision.reason === "cannot_tell";
     return withCatalog(source, mode, limit, {
       reason: unknown ? "unknown_tool" : decision.reason,
       codeDeny: unknown,
       label: unknown ? "deny" : "ask",
-      mapped: unknown ? "stop" : "escalate",
+      mapped: unknown ? "stop" : agent ? "ask" : "escalate",
       selected,
       top,
+      ...(agent ? { question: agentQuestion(decision) } : {}),
+      ...(human
+        ? { hold: "detail=cannot_tell question=Which tool should a human choose?" }
+        : {}),
     });
   }
 
@@ -731,7 +755,7 @@ export function decideTypedCalls({
       rank: (top.find((row) => row.name === tool.name) || {}).rank ?? null,
       probability: decision.selectedProb,
       confidence,
-      effect: "read",
+      effect: tool.effect,
       args: filled.args,
       weakest: filled.weakest,
       initiated: false,

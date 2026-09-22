@@ -15,7 +15,10 @@ mod policy;
 mod router;
 mod transport;
 
-pub use calls::{envelope_matches, hard_stop_json, missing_key_envelope, tool_call, HardStopTool};
+pub use calls::{
+    cannot_tell_json, envelope_matches, hard_stop_json, missing_key_envelope, model_uncertain_json,
+    obvious_effect_json, tool_call, HardStopTool,
+};
 pub use catalog::{schema_dump_json, tiny_catalog_json};
 pub use check::{
     check_envelope, deterministic_flags, file_kind, offline_check_json, parse_unified_diff, run_offline_check,
@@ -687,6 +690,73 @@ mod tests {
             paraphrased[0] = b' ';
             assert_ne!(paraphrased, recorded, "{file}");
         }
+    }
+
+    #[test]
+    fn g3_obvious_effects_continue_twice_and_uncertain_asks_before_a_human() {
+        let effects = ["read", "write", "filesystem", "network", "external"];
+        for _ in 0..2 {
+            for effect in effects {
+                let body = obvious_effect_json(effect, "active");
+                let recorded = calls_golden(&format!("{effect}.json"));
+                assert_calls_bytes(effect, &body, &recorded);
+                assert!(body.contains("\"mapped\":\"continue\""), "{effect}");
+                assert!(body.contains("\"choice\":\"continue\""), "{effect}");
+                assert!(body.contains("\"blocked\":false"), "{effect}");
+                assert!(body.contains("\"initiated\":false"), "{effect}");
+                assert!(body.contains("\"autoPromote\":false"), "{effect}");
+                assert!(body.contains("\"autoAllow\":false"), "{effect}");
+                assert!(body.contains(&format!("\"effect\":\"{effect}\"")), "{effect}");
+                assert!(!body.contains("F454"), "{effect}");
+            }
+        }
+        let shadow = obvious_effect_json("write", "shadow");
+        assert_calls_bytes("write-shadow", &shadow, &calls_golden("write-shadow.json"));
+        assert!(shadow.contains("\"honor\":false"));
+        assert!(shadow.contains("\"blocked\":false"));
+        assert!(shadow.contains("\"choice\":\"unclassified\""));
+        assert!(shadow.contains("\"mapped\":\"continue\""));
+        assert!(!shadow.contains("F454"));
+
+        let ask = model_uncertain_json();
+        assert_calls_bytes("model-uncertain", &ask, &calls_golden("model-uncertain.json"));
+        assert!(ask.contains("\"mapped\":\"ask\""));
+        assert!(ask.contains("\"reason\":\"model_uncertain\""));
+        assert!(ask.contains("confidence 0.6"));
+        assert!(ask.contains("probability 0.55"));
+        assert!(ask.contains("margin 0.15"));
+        assert!(ask.contains("\"hitl\":false"));
+        assert!(ask.contains("\"blocked\":false"));
+        assert!(!ask.contains("F454"));
+
+        let human = cannot_tell_json();
+        assert_calls_bytes("cannot-tell", &human, &calls_golden("cannot-tell.json"));
+        assert!(human.contains("\"mapped\":\"escalate\""));
+        assert!(human.contains("detail="));
+        assert!(human.contains("question="));
+        assert!(human.contains("\"hitl\":true"));
+        assert!(!human.contains("F454"));
+    }
+
+    fn assert_calls_bytes(label: &str, body: &str, recorded: &[u8]) {
+        if body.as_bytes() == recorded {
+            return;
+        }
+        let n = body.len().min(recorded.len());
+        let mut at = 0;
+        while at < n && body.as_bytes()[at] == recorded[at] {
+            at += 1;
+        }
+        let start = at.saturating_sub(70);
+        let rust_end = (at + 70).min(body.len());
+        let node_end = (at + 70).min(recorded.len());
+        panic!(
+            "{label} differ at {at} ({} vs {})\nRUST {}\nNODE {}",
+            body.len(),
+            recorded.len(),
+            &body[start..rust_end],
+            String::from_utf8_lossy(&recorded[start..node_end]),
+        );
     }
 
     fn router_golden(name: &str) -> String {

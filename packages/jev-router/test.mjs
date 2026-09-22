@@ -282,15 +282,22 @@ const cases = [
 
   test("write hook forwards the proposed edit clipped to 4000, not the path alone", () => {
     const dir = mkdtempSync(join(tmpdir(), "jev-g1-hook-"));
-    const router = join(dir, "router.mjs");
+    const script = join(dir, "router.mjs");
+    const router = join(dir, "router");
     const argvLog = join(dir, "argv.json");
     const secret = "typesafe-test-key";
+    const shQuote = (value) => `'${String(value).replaceAll("'", `'\\''`)}'`;
     writeFileSync(
-      router,
-      `#!/usr/bin/env node
-import { writeFileSync } from "node:fs";
+      script,
+      `import { writeFileSync } from "node:fs";
 writeFileSync(process.env.HARNESS_ARGV_LOG, JSON.stringify(process.argv.slice(2)));
 process.stdout.write('{"ok":true,"mode":"shadow","choice":"continue","gate":"auto","blocked":false,"exec":true,"bypass":false}\\n');
+`,
+    );
+    writeFileSync(
+      router,
+      `#!/bin/sh
+exec ${shQuote(process.execPath)} ${shQuote(script)} "$@"
 `,
     );
     chmodSync(router, 0o755);
@@ -316,6 +323,12 @@ process.stdout.write('{"ok":true,"mode":"shadow","choice":"continue","gate":"aut
       },
       encoding: "utf8",
     });
+    if (!existsSync(argvLog)) {
+      const spawnError = hook.error && hook.error.message ? hook.error.message : hook.error || "";
+      assert.fail(
+        `stub router did not write ${argvLog}\nstatus=${hook.status}\nerror=${spawnError}\nstderr=${hook.stderr || ""}\nstdout=${hook.stdout || ""}`,
+      );
+    }
     assert.equal(hook.status, 0, hook.stderr);
     const denied = JSON.parse(hook.stdout.trim());
     assert.equal(denied.decision, "defer");
@@ -352,6 +365,9 @@ process.stdout.write('{"ok":true,"mode":"shadow","choice":"continue","gate":"aut
           encoding: "utf8",
           env: {
             ...process.env,
+            HOME: dir,
+            GIT_CONFIG_GLOBAL: "/dev/null",
+            GIT_CONFIG_SYSTEM: "/dev/null",
             GIT_AUTHOR_NAME: "jev",
             GIT_AUTHOR_EMAIL: "jev@example.com",
             GIT_COMMITTER_NAME: "jev",

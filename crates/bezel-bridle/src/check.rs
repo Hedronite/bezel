@@ -198,66 +198,142 @@ pub fn deterministic_flags(hunk: &Hunk) -> Vec<String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckFinding {
+    pub flag: String,
+    pub id: String,
+    pub source: &'static str,
+    pub severity: &'static str,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OfflineCheck {
     pub status: &'static str,
     pub approval: bool,
     pub empty_findings_are_not_approval: bool,
     pub workflow: &'static str,
     pub policy: &'static str,
-    pub findings: Vec<String>,
-    pub mentions_no_diff: bool,
+    pub mode: &'static str,
+    pub missing_key: bool,
+    pub findings: Vec<CheckFinding>,
+    pub parked: Vec<String>,
+    pub not_checked: Vec<String>,
+    pub diff_present: bool,
+    pub hunk_count: usize,
+    pub judged: usize,
+    pub intent: String,
 }
 
 /// Offline `--check`. No judge, no client. `approval` stays false.
+fn warn_flag(flag: &str) -> bool {
+    matches!(
+        flag,
+        "skip_marker_added" | "assertions_removed" | "test_file_deleted" | "secret_path"
+    )
+}
+
+fn base_not_checked() -> Vec<String> {
+    vec![
+        "empty findings are not approval".to_string(),
+        "tests were not executed".to_string(),
+        "correctness of the change".to_string(),
+    ]
+}
+
 pub fn run_offline_check(diff: &str) -> OfflineCheck {
     let hunks = parse_unified_diff(diff);
+    let mut not_checked = base_not_checked();
     if diff.trim().is_empty() || hunks.is_empty() {
+        not_checked.push("no git diff — check unavailable".to_string());
         return OfflineCheck {
             status: "no_diff",
             approval: false,
             empty_findings_are_not_approval: true,
             workflow: "check",
             policy: crate::policy::CHECK_POLICY_ID,
+            mode: "shadow",
+            missing_key: true,
             findings: Vec::new(),
-            mentions_no_diff: true,
+            parked: Vec::new(),
+            not_checked,
+            diff_present: false,
+            hunk_count: 0,
+            judged: 0,
+            intent: String::new(),
         };
     }
     let mut findings = Vec::new();
     for hunk in &hunks {
+        let id = format!("h{}", hunk_index(&hunks, hunk));
         for flag in deterministic_flags(hunk) {
-            if !findings.iter().any(|got| got == &flag) {
-                findings.push(flag);
-            }
+            let severity = if warn_flag(&flag) { "warn" } else { "info" };
+            findings.push(CheckFinding {
+                flag,
+                id: id.clone(),
+                source: "deterministic",
+                severity,
+                path: hunk.path.clone(),
+            });
         }
+        not_checked.push(format!(
+            "{id} {}: TYPESAFE_API_KEY unset — unjudged (shadow continues)",
+            hunk.path
+        ));
     }
+    let hunk_count = hunks.len();
     OfflineCheck {
         status: "incomplete",
         approval: false,
         empty_findings_are_not_approval: true,
         workflow: "check",
         policy: crate::policy::CHECK_POLICY_ID,
+        mode: "shadow",
+        missing_key: true,
         findings,
-        mentions_no_diff: false,
+        parked: Vec::new(),
+        not_checked,
+        diff_present: true,
+        hunk_count,
+        judged: 0,
+        intent: String::new(),
     }
+}
+
+fn hunk_index(hunks: &[Hunk], hunk: &Hunk) -> usize {
+    hunks.iter().position(|row| row.path == hunk.path && row.header == hunk.header).unwrap_or(0) + 1
 }
 
 pub fn offline_check_json(report: &OfflineCheck) -> String {
     let findings = report
         .findings
         .iter()
-        .map(|flag| format!(r#"{{"flag":"{flag}","source":"deterministic"}}"#))
+        .map(|row| {
+            format!(
+                r#"{{"flag":"{}","id":"{}","source":"{}","severity":"{}","path":"{}"}}"#,
+                row.flag, row.id, row.source, row.severity, row.path
+            )
+        })
         .collect::<Vec<_>>()
         .join(",");
-    let no_diff = if report.mentions_no_diff {
-        r#","notChecked":["no git diff — check unavailable"]"#
-    } else {
-        ""
-    };
+    let not_checked = report
+        .not_checked
+        .iter()
+        .map(|line| format!("\"{}\"", line.replace('\\', "\\\\").replace('"', "\\\"")))
+        .collect::<Vec<_>>()
+        .join(",");
     format!(
-        r#"{{"ok":true,"workflow":"{workflow}","policy":"{policy}","missingKey":true,"approval":false,"emptyFindingsAreNotApproval":true,"status":"{status}","findings":[{findings}]{no_diff}}}"#,
+        r#"{{"ok":true,"workflow":"{workflow}","policy":"{policy}","mode":"{mode}","missingKey":{missing},"approval":false,"emptyFindingsAreNotApproval":true,"status":"{status}","findings":[{findings}],"parked":[],"notChecked":[{not_checked}],"facts":{{"diffPresent":{present},"hunkCount":{hunks},"judged":{judged}}},"intent":"","catalog":{catalog}}}"#,
         workflow = report.workflow,
         policy = report.policy,
+        mode = report.mode,
+        missing = if report.missing_key { "true" } else { "false" },
         status = report.status,
+        findings = findings,
+        not_checked = not_checked,
+        present = if report.diff_present { "true" } else { "false" },
+        hunks = report.hunk_count,
+        judged = report.judged,
+        catalog = crate::catalog::tiny_catalog_json(),
     )
 }
 

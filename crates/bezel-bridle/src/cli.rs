@@ -3,7 +3,9 @@
 
 use crate::catalog::{schema_dump_json, tiny_catalog_json};
 use crate::check::{offline_check_json, run_offline_check};
+use crate::harness::hook_command;
 use crate::transport::{recorded_dir, FixtureTransport};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 pub const LIVE_COMMAND: &str = "facet request run --environment typesafe --no-record";
@@ -36,6 +38,22 @@ pub fn fixture_client() -> Client {
 }
 
 pub fn run(args: &[String]) -> (i32, String) {
+    if args.first().map(String::as_str) == Some("hook") {
+        let mut stdin = String::new();
+        let _ = std::io::stdin().read_to_string(&mut stdin);
+        let owned: Vec<(String, String)> = [
+            "JEV_MODE",
+            "JEV_BYPASS",
+            "JEV_PERMISSION_MODE",
+            "JEV_TYPED_CALL_MODE",
+            "TYPESAFE_API_KEY",
+        ]
+        .into_iter()
+        .map(|key| (key.to_string(), std::env::var(key).unwrap_or_default()))
+        .collect();
+        let pairs: Vec<(&str, &str)> = owned.iter().map(|(key, value)| (key.as_str(), value.as_str())).collect();
+        return hook_command(&stdin, &pairs);
+    }
     if args.iter().any(|arg| arg == "--catalog") {
         return (0, format!("{}\n", tiny_catalog_json()));
     }

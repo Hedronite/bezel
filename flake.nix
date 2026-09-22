@@ -230,17 +230,17 @@
               exit 1
             fi
 
-            JEV_MODE=shadow TYPESAFE_API_KEY= "$router" --catalog >"$outf" 2>"$errf"
+            env -u TYPESAFE_API_KEY JEV_MODE=shadow "$router" --catalog >"$outf" 2>"$errf"
             test "$(grep -c . "$outf")" -eq 1
             jq -e '.kind == "tiny"' <"$outf" >/dev/null
             test ! -s "$errf"
 
-            JEV_MODE=shadow TYPESAFE_API_KEY= "$router" --schema Bash >"$outf" 2>"$errf"
+            env -u TYPESAFE_API_KEY JEV_MODE=shadow "$router" --schema Bash >"$outf" 2>"$errf"
             test "$(grep -c . "$outf")" -eq 1
             jq -e '.call == "schema-dump" and .decision == "defer" and .autoAllow == false' <"$outf" >/dev/null
             test ! -s "$errf"
 
-            JEV_MODE=shadow JEV_BYPASS= TYPESAFE_API_KEY= "$router" "probe intent" >"$outf" 2>"$errf"
+            env -u TYPESAFE_API_KEY -u JEV_BYPASS JEV_MODE=shadow "$router" "probe intent" >"$outf" 2>"$errf"
             test "$(grep -c . "$outf")" -eq 1
             jq -e '.missingKey == true and .blocked == false' <"$outf" >/dev/null
             if grep -F '[jev-router]' "$outf"; then

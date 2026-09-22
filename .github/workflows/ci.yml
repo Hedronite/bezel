@@ -63,6 +63,19 @@ jobs:
           fi
           echo "secrets scan clean"
 
+      - name: Splash is removed
+        if: ${{ !matrix.skip }}
+        run: |
+          if [ -e assets/omapi-mark.png ] || [ -d assets ]; then
+            echo "splash asset must be deleted, not gated" >&2
+            exit 1
+          fi
+          if git grep -n -E 'omapi-mark|oma on|OMAPI_SPLASH|isatty|isTTY' -- ':!.github/workflows/ci.yml'; then
+            echo "splash must be removed, not gated behind a TTY check" >&2
+            exit 1
+          fi
+          echo "splash removed"
+
       - name: Evaluate all four systems (no omp pin fetch)
         if: ${{ !matrix.skip }}
         run: |

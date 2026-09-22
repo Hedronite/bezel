@@ -21,7 +21,7 @@
  *   JEV_STEP_DIGEST   optional trajectory / step digest for loop-stop
  *   JEV_TOOL_NAME     optional Grok PreToolUse tool name (stamps policyId; no second client)
  *   JEV_TOOL_CLASS    optional class id (web|subagent|shell|write|mcp)
- *   JEV_TOOL_INPUT    optional command body (shell) or path (write)
+ *   JEV_TOOL_INPUT    optional command body (shell), write path, or clipped proposed edit
  *
  * Tool catalog (no extra client, no new policyId):
  *   --catalog         print the tiny always-on index and exit (no Choice)
@@ -61,7 +61,7 @@ import {
 } from "./calls.mjs";
 import { buildGateState, schemaDumpCall, scrubState, tinyCatalog } from "./catalog.mjs";
 import { runCheck } from "./check.mjs";
-import { gatherDiff, gatherFacts } from "./facts.mjs";
+import { gatherDiff, gatherFacts, parseWriteToolWire } from "./facts.mjs";
 import { decideLoopStop, missingKeyLoop } from "./loop-stop.mjs";
 import {
   applyPermissionVerdict,
@@ -302,14 +302,15 @@ function buildCalls(extra = {}) {
 function permissionDecision(extra = {}) {
   const classId = matchedClassId();
   if (!permissionSurface(classId)) return null;
-  const diff = classId === "write" ? gatherDiff(evidenceOpts(args)) : { text: "" };
+  // Write evidence is the clipped proposed edit, not the git worktree.
+  const write = classId === "write" ? parseWriteToolWire(args.toolInput) : { diffText: "", path: "" };
   return decidePermission({
     classId,
     requestedMode: process.env.JEV_PERMISSION_MODE,
     hasKey,
     contentPresent: classId === "shell" && toolInputPresent(args.toolInput),
-    diffText: diff.text,
-    path: classId === "write" ? args.toolInput : "",
+    diffText: write.diffText,
+    path: write.path,
     ...extra,
   });
 }

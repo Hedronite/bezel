@@ -25,6 +25,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyCallsVerdict, decideTypedCalls, effectiveTypedCallMode, normalizeCatalog } from "./calls.mjs";
 import { schemaDumpCall, tinyCatalog } from "./catalog.mjs";
+import { writeToolWire } from "./facts.mjs";
 import { applyPermissionVerdict, decidePermission, effectivePermissionMode } from "./permission.mjs";
 import {
   isJevBypass,
@@ -94,14 +95,23 @@ export function parseHookEvent(text) {
   };
 }
 
-export function toolInputText(event) {
+function scrubWriteInput(value, env) {
+  if (typeof value === "string") return scrubText(value, env);
+  if (Array.isArray(value)) return value.map((item) => scrubWriteInput(item, env));
+  if (!value || typeof value !== "object") return value;
+  const out = {};
+  for (const [key, item] of Object.entries(value)) out[key] = scrubWriteInput(item, env);
+  return out;
+}
+
+export function toolInputText(event, env = {}) {
   const stamp = pretoolStamp({ toolName: event && event.toolName ? event.toolName : "" });
   if (!stamp || !stamp.matched) return "";
   const input = event.toolInput;
   if (typeof input === "string") return input;
   if (!input || typeof input !== "object") return "";
   if (stamp.class === "shell") return String(input.command || input.cmd || "");
-  if (stamp.class === "write") return String(input.path || input.file_path || input.filePath || "");
+  if (stamp.class === "write") return writeToolWire(scrubWriteInput(input, env));
   return "";
 }
 
@@ -149,10 +159,16 @@ function scrubText(text, env) {
   return String(text || "").split(secret).join("[redacted]");
 }
 
+function forwardedToolInput(event, env) {
+  const stamp = pretoolStamp({ toolName: event && event.toolName ? event.toolName : "" });
+  if (stamp && stamp.class === "write") return toolInputText(event, env);
+  return scrubText(toolInputText(event, env), env).slice(0, INPUT_CAP);
+}
+
 function spawnRouter(event, env) {
   const bin = (env && env.JEV_ROUTER) || "jev-router";
   const intent = scrubText(event.intent || event.toolName || "", env).slice(0, INPUT_CAP);
-  const toolInput = scrubText(toolInputText(event), env).slice(0, INPUT_CAP);
+  const toolInput = forwardedToolInput(event, env);
   const argv = ["--tool-name", event.toolName, "--intent", intent || event.toolName];
   if (toolInput.trim()) argv.push("--tool-input", toolInput);
   if (env && env.JEV_TOOLS_FILE) argv.push("--tools-file", env.JEV_TOOLS_FILE);

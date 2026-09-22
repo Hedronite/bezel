@@ -31,7 +31,15 @@ import {
 } from "./catalog.mjs";
 import { runCheck } from "./check.mjs";
 import { decideHook, harnessConfig, harnessModes, parseHookEvent, runSmoke } from "./harness.mjs";
-import { availableCapabilities, diffPresent, gatherDiff, gatherFacts } from "./facts.mjs";
+import {
+  availableCapabilities,
+  clipToMaxHunkChars,
+  diffPresent,
+  gatherDiff,
+  gatherFacts,
+  parseWriteToolWire,
+  writeToolWire,
+} from "./facts.mjs";
 import { clipDigest, decideLoopStop, missingKeyLoop, shouldExecAgent } from "./loop-stop.mjs";
 import {
   applyPermissionVerdict,
@@ -204,6 +212,183 @@ const cases = [
     assert.equal(report.approval, false);
     assert.ok(report.notChecked.some((row) => /no git diff/.test(row)));
     assert.equal(report.findings.length, 0);
+  }),
+
+  test("proposed write edit clips to maxHunkChars and is the permission diff", () => {
+    assert.equal(CHECK_POLICY.maxHunkChars, 4000);
+    assert.equal(clipToMaxHunkChars("abc", 2), "ab");
+    const body = `it.skip("keeps the marker", () => {\n  expect(1).toBe(1);\n});\n${"Z".repeat(5000)}`;
+    const wire = writeToolWire({
+      file_path: "src/math.test.js",
+      old_string: 'it("adds", () => {\n  expect(1).toBe(1);\n});',
+      new_string: body,
+    });
+    const parsed = parseWriteToolWire(wire);
+    assert.equal(parsed.path, "src/math.test.js");
+    assert.equal(parsed.diffText.length, 4000);
+    assert.ok(parsed.diffText.includes("+it.skip"));
+    assert.equal(parsed.diffText.includes("Z".repeat(4000)), false);
+    const flagged = decidePermission({
+      classId: "write",
+      requestedMode: "active",
+      hasKey: true,
+      diffText: parsed.diffText,
+      path: parsed.path,
+    });
+    assert.equal(flagged.reason, "skip_marker_added");
+    assert.equal(flagged.codeDeny, true);
+    assert.equal(flagged.autoAllow, false);
+
+    const created = parseWriteToolWire(writeToolWire({ path: "notes/a.md", contents: "hello\n" }));
+    assert.equal(created.path, "notes/a.md");
+    assert.match(created.diffText, /\+hello/);
+    const multi = parseWriteToolWire(
+      writeToolWire({
+        path: "src/a.test.js",
+        edits: [{ old_string: "expect(1)", new_string: "expect(2)" }],
+      }),
+    );
+    assert.match(multi.diffText, /-expect\(1\)/);
+    assert.match(multi.diffText, /\+expect\(2\)/);
+
+    const pathOnly = parseWriteToolWire("src/app.js");
+    assert.equal(pathOnly.path, "src/app.js");
+    assert.equal(pathOnly.diffText, "");
+    const emptyWrite = decidePermission({
+      classId: "write",
+      requestedMode: "active",
+      hasKey: true,
+      diffText: pathOnly.diffText,
+      path: pathOnly.path,
+    });
+    assert.equal(emptyWrite.reason, "empty_findings_not_approval");
+    assert.equal(emptyWrite.codeDeny, false);
+
+    const secret = parseWriteToolWire(".env");
+    const denied = decidePermission({
+      classId: "write",
+      requestedMode: "shadow",
+      hasKey: false,
+      diffText: secret.diffText,
+      path: secret.path,
+    });
+    assert.equal(denied.reason, "secret_path");
+    assert.equal(denied.codeDeny, true);
+
+    const over = parseWriteToolWire(JSON.stringify({ path: "a.md", proposed: "Q".repeat(5000) }));
+    assert.equal(over.path, "a.md");
+    assert.equal(over.diffText, "Q".repeat(4000));
+  }),
+
+  test("write hook forwards the proposed edit clipped to 4000, not the path alone", () => {
+    const dir = mkdtempSync(join(tmpdir(), "jev-g1-hook-"));
+    const router = join(dir, "router.mjs");
+    const argvLog = join(dir, "argv.json");
+    const secret = "typesafe-test-key";
+    writeFileSync(
+      router,
+      `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(process.env.HARNESS_ARGV_LOG, JSON.stringify(process.argv.slice(2)));
+process.stdout.write('{"ok":true,"mode":"shadow","choice":"continue","gate":"auto","blocked":false,"exec":true,"bypass":false}\\n');
+`,
+    );
+    chmodSync(router, 0o755);
+    const event = JSON.stringify({
+      tool_name: "search_replace",
+      tool_input: {
+        file_path: "notes/a.md",
+        old_string: "old",
+        new_string: `${secret}\n${"Z".repeat(5000)}`,
+      },
+    });
+    const hook = spawnSync(process.execPath, [join(here, "harness.mjs"), "hook"], {
+      input: event,
+      env: {
+        ...process.env,
+        JEV_ROUTER: router,
+        JEV_BYPASS: "",
+        JEV_MODE: "shadow",
+        JEV_PERMISSION_MODE: "",
+        JEV_TYPED_CALL_MODE: "",
+        TYPESAFE_API_KEY: secret,
+        HARNESS_ARGV_LOG: argvLog,
+      },
+      encoding: "utf8",
+    });
+    assert.equal(hook.status, 0, hook.stderr);
+    const denied = JSON.parse(hook.stdout.trim());
+    assert.equal(denied.decision, "defer");
+    assert.notEqual(denied.decision, "allow");
+    const argv = JSON.parse(readFileSync(argvLog, "utf8"));
+    const wire = argv[argv.indexOf("--tool-input") + 1];
+    assert.notEqual(wire, "notes/a.md");
+    const parsed = JSON.parse(wire);
+    assert.equal(parsed.path, "notes/a.md");
+    assert.equal(parsed.proposed.length, 4000);
+    assert.equal(parsed.proposed.includes(secret), false);
+    assert.ok(parsed.proposed.includes("[redacted]"));
+    assert.ok(parsed.proposed.includes("Z"));
+    assert.equal(wire.includes(secret), false);
+    rmSync(dir, { recursive: true, force: true });
+  }),
+
+  test("check stays on git-worktree gatherDiff and empty findings are not approval", async () => {
+    const src = readFileSync(join(here, "jev-router.mjs"), "utf8");
+    const permissionSrc = src.slice(src.indexOf("function permissionDecision"), src.indexOf("function withPermission"));
+    assert.match(permissionSrc, /parseWriteToolWire/);
+    assert.doesNotMatch(permissionSrc, /gatherDiff/);
+    const checkSrc = src.slice(src.indexOf("async function runCheckWorkflow"), src.indexOf("async function shadowWorkflowChoice"));
+    assert.match(checkSrc, /gatherDiff\(evidenceOpts\(args\)\)/);
+    assert.doesNotMatch(checkSrc, /parseWriteToolWire/);
+
+    const dir = mkdtempSync(join(tmpdir(), "jev-g1-repo-"));
+    const git = (args) => {
+      const run = spawnSync(
+        "git",
+        ["-c", "commit.gpgsign=false", "-c", "user.name=jev", "-c", "user.email=jev@example.com", ...args],
+        {
+          cwd: dir,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            GIT_AUTHOR_NAME: "jev",
+            GIT_AUTHOR_EMAIL: "jev@example.com",
+            GIT_COMMITTER_NAME: "jev",
+            GIT_COMMITTER_EMAIL: "jev@example.com",
+          },
+        },
+      );
+      assert.equal(run.status, 0, `${args.join(" ")}\n${run.stderr}`);
+    };
+    git(["init"]);
+    writeFileSync(join(dir, "a.js"), "test('ok', () => { expect(1).toBe(1); });\n");
+    git(["add", "a.js"]);
+    git(["commit", "-m", "init"]);
+    writeFileSync(join(dir, "a.js"), "test.skip('ok', () => { expect(1).toBe(1); });\n");
+    const worktree = gatherDiff({ repo: dir });
+    assert.equal(worktree.source, "git-worktree");
+    assert.match(worktree.text, /test\.skip/);
+    const fromWorktree = await runCheck({ diffText: worktree.text, missingKey: true, mode: "shadow" });
+    assert.equal(fromWorktree.approval, false);
+    assert.ok(fromWorktree.findings.some((row) => row.flag === "skip_marker_added"));
+
+    const pathOnly = parseWriteToolWire("a.js");
+    const ignored = decidePermission({
+      classId: "write",
+      requestedMode: "active",
+      hasKey: true,
+      diffText: pathOnly.diffText,
+      path: pathOnly.path,
+    });
+    assert.equal(pathOnly.diffText, "");
+    assert.equal(ignored.reason, "empty_findings_not_approval");
+
+    const empty = await runCheck({ diffText: gatherDiff({ diffFile: emptyDiff }).text, missingKey: true });
+    assert.equal(empty.status, "no_diff");
+    assert.equal(empty.approval, false);
+    assert.equal(empty.emptyFindingsAreNotApproval, true);
+    rmSync(dir, { recursive: true, force: true });
   }),
 
   test("runCheck with fake judge parks / finds via code thresholds", async () => {

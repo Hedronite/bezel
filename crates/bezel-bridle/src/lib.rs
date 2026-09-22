@@ -31,10 +31,14 @@ pub use harness::{
     decide_hook, hook_command, hook_on_text, hook_stdout, modes_from_env, parse_hook_event, HookEvent, Modes,
 };
 pub use loop_stop::{apply_loop_stop_thresholds, LoopStopDecision};
-pub use permission::{active_hook, write_from_flags, WriteVerdict};
+pub use permission::{
+    active_hook, apply_permission_verdict, decide_permission, write_from_flags, PermissionInput,
+    PermissionParent, PermissionVerdict, WriteVerdict,
+};
 pub use router::bash_no_key;
 pub use policy::{
-    hook_decision, match_pretool_class, pretool_hook_decision, pretool_stamp, GateVerdict, HookOut, AUTO_ALLOW,
+    hook_decision, match_pretool_class, pretool_hook_decision, pretool_stamp, GateVerdict, HookOut,
+    SurfaceVerdict, AUTO_ALLOW,
     CHECK_POLICY_ID, CONCERN_PARK, MAX_HUNK_CHARS, LOOP_STOP_MIN_CONFIDENCE, LOOP_STOP_MIN_MARGIN, LOOP_STOP_MIN_PROBABILITY,
     LOOP_STOP_POLICY_ID, ROUTING_POLICY_ID, WRITE_CODE_DENY_FLAGS,
 };
@@ -213,6 +217,228 @@ mod tests {
         assert_eq!(verdict.mapped, "stop");
         assert!(verdict.code_deny);
         assert_ne!(verdict.mapped, "continue");
+    }
+
+    fn permission_golden(name: &str) -> String {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/jev-router/testdata/permission")
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()))
+    }
+
+    fn permission_input(
+        class_id: &'static str,
+        requested_mode: &'static str,
+        has_key: bool,
+        content_present: bool,
+        label: Option<&'static str>,
+        confidence: f64,
+        allow_p: f64,
+        deny_p: f64,
+        ask_p: f64,
+        path: &'static str,
+    ) -> PermissionInput {
+        PermissionInput {
+            class_id,
+            requested_mode,
+            has_key,
+            content_present,
+            label,
+            confidence,
+            allow_p,
+            deny_p,
+            ask_p,
+            path,
+        }
+    }
+
+    fn assert_permission(name: &str, verdict: &PermissionVerdict) {
+        assert_eq!(verdict.json, permission_golden(name), "{name}");
+        assert!(!verdict.auto_allow, "{name}");
+        assert!(!verdict.json.contains("F454"), "{name}");
+        assert!(!verdict.json.contains("\"decision\":\"allow\""), "{name}");
+    }
+
+    #[test]
+    fn g1_permission_surface_matches_permission_mjs() {
+        let src = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/permission.rs"))
+            .unwrap();
+        assert!(!src.contains("JEV_MODE"));
+        assert!(!src.contains("F454"));
+
+        assert!(decide_permission(&permission_input(
+            "web", "active", true, false, Some("allow"), 0.0, 0.0, 0.0, 0.0, ""
+        ))
+        .is_none());
+        assert_eq!(permission_golden("unknown-web.json"), "null");
+        assert!(decide_permission(&permission_input(
+            "read_file", "active", true, false, None, 0.0, 0.0, 0.0, 0.0, ""
+        ))
+        .is_none());
+        assert_eq!(permission_golden("unknown-read-file.json"), "null");
+
+        let missing = decide_permission(&permission_input(
+            "shell",
+            "active",
+            false,
+            true,
+            Some("deny"),
+            0.99,
+            0.01,
+            0.98,
+            0.01,
+            "",
+        ))
+        .unwrap();
+        assert_permission("shell-missing-key.json", &missing);
+        assert_eq!(missing.mode, "shadow");
+        assert!(!missing.honor);
+        assert_eq!(missing.choice, "unclassified");
+
+        let denied = decide_permission(&permission_input(
+            "write",
+            "active",
+            false,
+            false,
+            Some("allow"),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            ".env",
+        ))
+        .unwrap();
+        assert_permission("write-missing-key-deny.json", &denied);
+        assert_eq!(denied.mode, "shadow");
+        assert!(denied.json.contains("\"codeDeny\":true"));
+        assert!(denied.json.contains("\"mapped\":\"stop\""));
+        assert!(denied.json.contains("\"reason\":\"secret_path\""));
+        assert_eq!(denied.choice, "unclassified");
+        assert!(!denied.blocked);
+
+        let mcp = decide_permission(&permission_input(
+            "mcp", "active", false, false, None, 0.0, 0.0, 0.0, 0.0, ""
+        ))
+        .unwrap();
+        assert_permission("mcp-missing-key.json", &mcp);
+        assert_eq!(mcp.mode, "shadow");
+        assert_eq!(mcp.policy_id, ROUTING_POLICY_ID);
+
+        let shadow = decide_permission(&permission_input(
+            "shell", "yes", true, true, Some("allow"), 0.9, 0.8, 0.1, 0.1, ""
+        ))
+        .unwrap();
+        assert_permission("shell-shadow-default.json", &shadow);
+        assert_eq!(shadow.mode, "shadow");
+        assert!(!shadow.honor);
+        assert!(shadow.json.contains("\"mapped\":\"continue\""));
+
+        let continued = decide_permission(&permission_input(
+            "shell", "active", true, true, Some("allow"), 0.9, 0.8, 0.1, 0.1, ""
+        ))
+        .unwrap();
+        assert_permission("shell-active-continue.json", &continued);
+        let kept = apply_permission_verdict(
+            PermissionParent {
+                choice: "stop",
+                gate: "hold",
+                blocked: true,
+                exec: false,
+                hitl: Some(false),
+                mode: "active",
+            },
+            &continued,
+        );
+        assert_eq!(kept, permission_golden("continue-keeps-parent-stop.json"));
+        assert!(kept.contains("\"choice\":\"stop\""));
+        assert!(kept.contains("\"autoAllow\":false"));
+        let kept_hook = pretool_hook_decision(&GateVerdict {
+            bypass: false,
+            mode: "active".to_string(),
+            choice: Some("stop".to_string()),
+            gate: Some("hold".to_string()),
+            blocked: true,
+            policy_id: String::new(),
+            permission: Some(SurfaceVerdict {
+                honor: continued.honor,
+                mode: continued.mode.to_string(),
+                choice: continued.choice.to_string(),
+                gate: continued.gate.to_string(),
+                blocked: continued.blocked,
+                policy_id: continued.policy_id.to_string(),
+            }),
+            calls: None,
+        });
+        assert_eq!(kept_hook.decision, "deny");
+        assert_ne!(kept_hook.decision, "allow");
+        assert_eq!(
+            format!(
+                r#"{{"action":"deny","exitCode":2,"decision":"deny","reason":"{}"}}"#,
+                kept_hook.reason
+            ),
+            permission_golden("continue-keeps-parent-stop-hook.json")
+        );
+
+        let shadow_deny = decide_permission(&permission_input(
+            "shell", "shadow", true, true, Some("deny"), 0.9, 0.05, 0.9, 0.05, ""
+        ))
+        .unwrap();
+        assert_permission("shell-shadow-deny.json", &shadow_deny);
+        let logged = apply_permission_verdict(
+            PermissionParent {
+                choice: "continue",
+                gate: "auto",
+                blocked: false,
+                exec: true,
+                hitl: None,
+                mode: "shadow",
+            },
+            &shadow_deny,
+        );
+        assert_eq!(logged, permission_golden("shadow-keeps-parent.json"));
+        assert!(logged.contains("\"choice\":\"continue\""));
+        assert!(!logged.contains("\"choice\":\"stop\""));
+        let logged_hook = pretool_hook_decision(&GateVerdict {
+            bypass: false,
+            mode: "shadow".to_string(),
+            choice: Some("continue".to_string()),
+            gate: Some("auto".to_string()),
+            blocked: false,
+            policy_id: String::new(),
+            permission: Some(SurfaceVerdict {
+                honor: shadow_deny.honor,
+                mode: shadow_deny.mode.to_string(),
+                choice: shadow_deny.choice.to_string(),
+                gate: shadow_deny.gate.to_string(),
+                blocked: shadow_deny.blocked,
+                policy_id: shadow_deny.policy_id.to_string(),
+            }),
+            calls: None,
+        });
+        assert_eq!(logged_hook.decision, "defer");
+        assert_ne!(logged_hook.decision, "allow");
+        assert_eq!(logged_hook.reason, "shadow");
+
+        let honoring = pretool_hook_decision(&GateVerdict {
+            bypass: false,
+            mode: "shadow".to_string(),
+            choice: Some("continue".to_string()),
+            gate: Some("auto".to_string()),
+            blocked: false,
+            policy_id: String::new(),
+            permission: Some(SurfaceVerdict {
+                honor: continued.honor,
+                mode: continued.mode.to_string(),
+                choice: continued.choice.to_string(),
+                gate: continued.gate.to_string(),
+                blocked: continued.blocked,
+                policy_id: continued.policy_id.to_string(),
+            }),
+            calls: None,
+        });
+        assert_eq!(honoring.decision, "defer");
+        assert_eq!(honoring.reason, "exec");
+        assert_ne!(honoring.decision, "allow");
     }
 
     #[test]

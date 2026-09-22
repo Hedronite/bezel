@@ -1,0 +1,1 @@
+{"surface":"shell","policyId":"omapi-loop-stop-policy@1","parent":"loop-stop","catalog":"permission","newCatalog":true,"mode":"shadow","honor":false,"shadow":true,"blocked":false,"exec":true,"hitl":false,"choice":"unclassified","gate":"auto","label":null,"modelLabel":"deny","mapped":null,"reason":"missing_key","codeDeny":false,"skipped":false,"missingKey":true,"autoAllow":false}

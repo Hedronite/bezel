@@ -1,22 +1,40 @@
-# Bezel
+<h1 align="center">Bezel</h1>
 
-Bezel is a harness overlay. It supplements an agent harness you already run with skills, a Jev toolkit, and gate adapters. You keep the harness. This repository does not include harness source.
+<p align="center">
+  <a href="docs/brand/">
+    <img src="docs/brand/bezel-lockup.png" alt="Bezel product lockup" width="320">
+  </a>
+</p>
 
-[![CI](https://img.shields.io/github/actions/workflow/status/VirtualMachinist/bezel/ci.yml?branch=main&style=flat&colorA=222222&colorB=3FB950)](https://github.com/VirtualMachinist/bezel/actions/workflows/ci.yml)
-[![MIT license](https://img.shields.io/badge/License-MIT-58A6FF?style=flat&colorA=222222)](#license)
-[![Nix](https://img.shields.io/badge/Nix-5277C3?style=flat&colorA=222222&logo=nixos&logoColor=white)](https://nixos.org)
-[![Node](https://img.shields.io/badge/Node-339933?style=flat&colorA=222222&logo=nodedotjs&logoColor=white)](https://nodejs.org)
+<p align="center">
+  A harness overlay: skills, a Jev toolkit, and adapters.<br>
+  <strong>a Hedronite setting.</strong><br>
+  Not Omarchy. Not an omp fork. Not a splash.
+</p>
 
-[What Bezel is](#what-bezel-is) ·
-[What Bezel is not](#what-bezel-is-not) ·
-[Quick start](#quick-start) ·
-[Packages](#packages) ·
-[Names](#names) ·
-[Jev](#jev) ·
-[Skills](#skills) ·
-[Platforms](#platforms) ·
-[Status](#status) ·
-[Contributing](#contributing)
+<p align="center">
+  <a href="https://github.com/VirtualMachinist/bezel/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/VirtualMachinist/bezel/ci.yml?branch=main&style=flat&colorA=0a1420&colorB=c5a378&label=CI" alt="CI"></a>
+  <a href="#license"><img src="https://img.shields.io/badge/License-MIT-c5a378?style=flat&colorA=0a1420" alt="MIT license"></a>
+  <a href="https://nixos.org"><img src="https://img.shields.io/badge/Nix-5277C3?style=flat&colorA=0a1420&logo=nixos&logoColor=white" alt="Nix"></a>
+  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/Node-339933?style=flat&colorA=0a1420&logo=nodedotjs&logoColor=white" alt="Node"></a>
+</p>
+
+<p align="center">
+  <a href="#what-bezel-is">What Bezel is</a> ·
+  <a href="#what-bezel-is-not">What Bezel is not</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#packages">Packages</a> ·
+  <a href="#names">Names</a> ·
+  <a href="#jev">Jev</a> ·
+  <a href="#skills">Skills</a> ·
+  <a href="#platforms">Platforms</a> ·
+  <a href="#status">Status</a> ·
+  <a href="#contributing">Contributing</a>
+</p>
+
+---
+
+Bezel supplements an agent harness you already run with skills, a Jev toolkit, and gate adapters. You keep the harness. This repository does not include harness source.
 
 ## What Bezel is
 
@@ -203,7 +221,7 @@ If a later release drops a platform build, `packages/omp-pin.nix` **throws** for
 - The tool catalog is a small always-on index of the existing policy ids. Full schema is `jev-router --schema NAME` and is not an allow. Permission catalogs stay shadow.
 - `grok-build-jev` adapts those controls for Grok Build. Default modes stay shadow. The harness does not install a host hook.
 - Skills ship as `skills-stub` until you change the input URL.
-- Nix packaging stays. The router stays JavaScript in this change.
+- Nix packaging stays. The router stays JavaScript.
 
 ## Contributing
 
@@ -217,6 +235,8 @@ nix build -L .#bezel .#jev-router .#cursor-agent-jev .#grok-build-jev
 Do not commit secrets. `TYPESAFE_API_KEY` and other keys belong in the process environment, not the flake.
 
 ## License
+
+Built by [VirtualMachinist](https://github.com/VirtualMachinist). A [Hedronite](https://hedronite.com) setting. The lockup is in [docs/brand/](docs/brand/).
 
 MIT. `bezel-pinned` downloads published binaries from [oh-my-pi](https://github.com/can1357/oh-my-pi) v18.2.6. This overlay does not include that project's source. Install a host `omp` binary from [omp.sh](https://omp.sh), or set `OMP_BIN`.
 

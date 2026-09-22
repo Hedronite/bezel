@@ -560,7 +560,7 @@
             echo "$smoke" | jq -e '.permission.keyAbsent.mode == "shadow" and .permission.keyAbsent.honor == false and .permission.keyAbsent.blocked == false'
             echo "$smoke" | jq -e '.bypass.decision == "defer" and .bypass.reason == "bypass"'
             echo "$smoke" | jq -e '.notBypass.decision == "deny"'
-            echo "$smoke" | jq -e '.irreversible.decision == "deny" and .irreversible.code == "F454" and .irreversible.initiated == false and .irreversible.autoPromote == false'
+            echo "$smoke" | jq -e '.irreversible.decision == "defer" and .irreversible.code == null and (.irreversible | tostring | contains("F454") | not) and .irreversible.initiated == false and .irreversible.autoPromote == false'
             echo "$smoke" | jq -e '.uncertainActive.decision == "deny" and .uncertainShadow.decision == "defer"'
             echo "$smoke" | jq -e '.readStaysDefer.decision == "defer" and .loopStopWins.decision == "deny"'
             echo "$smoke" | jq -e '.unmapped.decision == "defer" and .unmapped.reason == "unmatched"'

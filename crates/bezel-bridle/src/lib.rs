@@ -15,7 +15,10 @@ mod policy;
 mod router;
 mod transport;
 
-pub use calls::tool_call;
+pub use calls::{
+    cannot_tell_json, envelope_matches, hard_stop_json, missing_key_envelope, model_uncertain_json,
+    obvious_effect_json, tool_call, HardStopTool,
+};
 pub use catalog::{schema_dump_json, tiny_catalog_json};
 pub use check::{
     check_envelope, deterministic_flags, file_kind, offline_check_json, parse_unified_diff, run_offline_check,
@@ -584,6 +587,176 @@ mod tests {
         let call = tool_call();
         assert_eq!(call.transport, "facet");
         assert!(!call.initiated);
+    }
+
+    #[test]
+    fn g1_missing_key_envelope_matches_calls_mjs() {
+        let body = missing_key_envelope();
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/jev-router/testdata/calls/missing-key.json");
+        let recorded = std::fs::read(&path).unwrap();
+        assert_eq!(body.as_bytes(), recorded.as_slice());
+        let recorded = std::str::from_utf8(&recorded).unwrap();
+        assert!(envelope_matches(&body, recorded));
+        assert!(body.contains("\"facetVersion\":\"2.1.3\""));
+        assert!(body.contains("\"transport\":\"facet\""));
+        assert!(body.contains("\"initiated\":false"));
+        assert!(body.contains("\"autoPromote\":false"));
+        assert!(body.contains("\"autoAllow\":false"));
+        assert!(body.contains("\"mode\":\"shadow\""));
+        assert!(body.contains("\"honor\":false"));
+        assert!(body.contains("\"reason\":\"missing_key\""));
+        assert!(!body.contains("\"label\":\"allow\""));
+        assert!(!body.contains("\"choice\":\"allow\""));
+        assert!(!body.contains("F454"));
+        let mut paraphrased = body.clone().into_bytes();
+        let index = paraphrased.iter().position(|byte| *byte == b'f').unwrap();
+        paraphrased[index] = b'g';
+        let paraphrased = String::from_utf8(paraphrased).unwrap();
+        assert!(!envelope_matches(&paraphrased, recorded));
+    }
+
+    fn calls_golden(name: &str) -> Vec<u8> {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/jev-router/testdata/calls")
+            .join(name);
+        std::fs::read(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()))
+    }
+
+    #[test]
+    fn g2_hard_stops_match_calls_mjs_and_are_not_promoted() {
+        let next = HardStopTool {
+            name: "linear__list_issues",
+            description: "List issues",
+            effect: "read",
+        };
+        let cases = [
+            (
+                "invalid-fn.json",
+                "linear.save",
+                HardStopTool {
+                    name: "linear.save",
+                    description: "Bad name",
+                    effect: "read",
+                },
+                "F452",
+            ),
+            (
+                "missing-effect.json",
+                "bare__tool",
+                HardStopTool {
+                    name: "bare__tool",
+                    description: "No effect",
+                    effect: "",
+                },
+                "F456",
+            ),
+            (
+                "invalid-effect.json",
+                "odd__tool",
+                HardStopTool {
+                    name: "odd__tool",
+                    description: "Odd",
+                    effect: "not-an-effect",
+                },
+                "F456",
+            ),
+            (
+                "payment.json",
+                "pay__now",
+                HardStopTool {
+                    name: "pay__now",
+                    description: "Pay",
+                    effect: "payment",
+                },
+                "F454",
+            ),
+        ];
+        for (file, winner, tool, code) in cases {
+            let body = hard_stop_json(
+                winner,
+                &[tool, next],
+                &[(winner, 0.8), ("linear__list_issues", 0.2)],
+            );
+            let recorded = calls_golden(file);
+            assert_eq!(body.as_bytes(), recorded.as_slice(), "{file}");
+            assert!(body.contains(&format!("\"code\":\"{code}\"")), "{file}");
+            assert!(body.contains("\"best\":null"), "{file}");
+            assert!(body.contains("\"autoPromote\":false"), "{file}");
+            assert!(body.contains("\"mapped\":\"stop\""), "{file}");
+            assert!(body.contains("\"choice\":\"stop\""), "{file}");
+            assert!(!body.contains("\"name\":\"linear__list_issues\",\"outcome\""));
+            let mut paraphrased = body.into_bytes();
+            paraphrased[0] = b' ';
+            assert_ne!(paraphrased, recorded, "{file}");
+        }
+    }
+
+    #[test]
+    fn g3_obvious_effects_continue_twice_and_uncertain_asks_before_a_human() {
+        let effects = ["read", "write", "filesystem", "network", "external"];
+        for _ in 0..2 {
+            for effect in effects {
+                let body = obvious_effect_json(effect, "active");
+                let recorded = calls_golden(&format!("{effect}.json"));
+                assert_calls_bytes(effect, &body, &recorded);
+                assert!(body.contains("\"mapped\":\"continue\""), "{effect}");
+                assert!(body.contains("\"choice\":\"continue\""), "{effect}");
+                assert!(body.contains("\"blocked\":false"), "{effect}");
+                assert!(body.contains("\"initiated\":false"), "{effect}");
+                assert!(body.contains("\"autoPromote\":false"), "{effect}");
+                assert!(body.contains("\"autoAllow\":false"), "{effect}");
+                assert!(body.contains(&format!("\"effect\":\"{effect}\"")), "{effect}");
+                assert!(!body.contains("F454"), "{effect}");
+            }
+        }
+        let shadow = obvious_effect_json("write", "shadow");
+        assert_calls_bytes("write-shadow", &shadow, &calls_golden("write-shadow.json"));
+        assert!(shadow.contains("\"honor\":false"));
+        assert!(shadow.contains("\"blocked\":false"));
+        assert!(shadow.contains("\"choice\":\"unclassified\""));
+        assert!(shadow.contains("\"mapped\":\"continue\""));
+        assert!(!shadow.contains("F454"));
+
+        let ask = model_uncertain_json();
+        assert_calls_bytes("model-uncertain", &ask, &calls_golden("model-uncertain.json"));
+        assert!(ask.contains("\"mapped\":\"ask\""));
+        assert!(ask.contains("\"reason\":\"model_uncertain\""));
+        assert!(ask.contains("confidence 0.6"));
+        assert!(ask.contains("probability 0.55"));
+        assert!(ask.contains("margin 0.15"));
+        assert!(ask.contains("\"hitl\":false"));
+        assert!(ask.contains("\"blocked\":false"));
+        assert!(!ask.contains("F454"));
+
+        let human = cannot_tell_json();
+        assert_calls_bytes("cannot-tell", &human, &calls_golden("cannot-tell.json"));
+        assert!(human.contains("\"mapped\":\"escalate\""));
+        assert!(human.contains("detail="));
+        assert!(human.contains("question="));
+        assert!(human.contains("\"hitl\":true"));
+        assert!(!human.contains("F454"));
+    }
+
+    fn assert_calls_bytes(label: &str, body: &str, recorded: &[u8]) {
+        if body.as_bytes() == recorded {
+            return;
+        }
+        let n = body.len().min(recorded.len());
+        let mut at = 0;
+        while at < n && body.as_bytes()[at] == recorded[at] {
+            at += 1;
+        }
+        let start = at.saturating_sub(70);
+        let rust_end = (at + 70).min(body.len());
+        let node_end = (at + 70).min(recorded.len());
+        panic!(
+            "{label} differ at {at} ({} vs {})\nRUST {}\nNODE {}",
+            body.len(),
+            recorded.len(),
+            &body[start..rust_end],
+            String::from_utf8_lossy(&recorded[start..node_end]),
+        );
     }
 
     fn router_golden(name: &str) -> String {

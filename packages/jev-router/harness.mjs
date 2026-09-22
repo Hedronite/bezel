@@ -340,9 +340,10 @@ export function runSmoke({ logDir } = {}) {
       probabilities: { linear__save_issue: 0.85, linear__list_issues: 0.15 },
     },
   });
-  expect(irreversibleCalls.code === "F454" && irreversibleCalls.mapped === "stop", "write effect denies");
-  expect(irreversibleCalls.initiated === false && irreversibleCalls.autoPromote === false, "denied winner stays put");
-  expect(irreversibleCalls.best == null, "denied winner is not replaced");
+  expect(irreversibleCalls.code == null && irreversibleCalls.mapped === "continue", "obvious write continues");
+  expect(JSON.stringify(irreversibleCalls).includes("F454") === false, "obvious write has no F454");
+  expect(irreversibleCalls.initiated === false && irreversibleCalls.autoPromote === false, "continue does not initiate or promote");
+  expect(irreversibleCalls.best != null && irreversibleCalls.best.initiated === false, "winner stays the write");
   const irreversibleVerdict = applyCallsVerdict(
     {
       mode: "shadow",
@@ -355,7 +356,7 @@ export function runSmoke({ logDir } = {}) {
     irreversibleCalls,
   );
   const irreversibleHook = hookOf({ toolName: "linear__save_issue" }, {}, irreversibleVerdict);
-  expect(irreversibleHook.decision === "deny", "irreversible call is denied when honored");
+  expect(irreversibleHook.decision === "defer", "obvious write does not block a shadow parent");
 
   const observed = decidePermission({
     classId: "shell",

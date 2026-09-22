@@ -1,6 +1,6 @@
 ---
 name: bootstrap
-description: Placeholder skill shipped with omapi-overlay skills-stub until omahedron-skills is published. Replace the flake skills input; do not copy a second skills tree into this overlay repo.
+description: Placeholder skill shipped with the Bezel skills-stub until a skills repository is published. Replace the flake skills input; do not copy a second skills tree into this repo.
 ---
 
 # bootstrap

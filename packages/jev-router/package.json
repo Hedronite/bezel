@@ -1,10 +1,11 @@
 {
-  "name": "jev-router",
+  "name": "bezel-jev",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Router-only Jev Choice gate + loop-stop/escalate + shadow permission catalogs + tiny tool catalog + shadow typed calls + Grok Build harness + shadow check. No secrets in this package.",
+  "description": "Bezel Jev router: Choice gate, loop-stop/escalate, shadow permission catalogs, tiny tool catalog, shadow typed calls, Grok Build harness, and shadow check. No secrets in this package. JavaScript until a later Rust phase.",
   "bin": {
+    "bezel-jev": "./jev-router.mjs",
     "jev-router": "./jev-router.mjs"
   },
   "scripts": {

@@ -17,22 +17,22 @@ jobs:
             os: ubuntu-latest
             skip: false
             skip_reason: ""
-            build_omapi_pin: false
+            build_bezel_pin: false
           - system: aarch64-linux
             os: ubuntu-latest
             skip: true
             skip_reason: "No aarch64-linux GitHub-hosted runner in this workflow. Pin exists (omp-linux-arm64). Not a pretend green build."
-            build_omapi_pin: false
+            build_bezel_pin: false
           - system: aarch64-darwin
             os: ubuntu-latest
             skip: true
             skip_reason: "No aarch64-darwin runner configured. Pin exists (omp-darwin-arm64). Not a pretend green build."
-            build_omapi_pin: false
+            build_bezel_pin: false
           - system: x86_64-darwin
             os: ubuntu-latest
             skip: true
             skip_reason: "No x86_64-darwin runner configured. Pin exists (omp-darwin-x64). Not a pretend green build."
-            build_omapi_pin: false
+            build_bezel_pin: false
 
     steps:
       - name: Honesty skip
@@ -66,11 +66,12 @@ jobs:
       - name: Splash is removed
         if: ${{ !matrix.skip }}
         run: |
-          if [ -e assets/omapi-mark.png ] || [ -d assets ]; then
+          if [ -e assets/omapi-mark.png ] || [ -e assets/bezel-mark.png ] || [ -d assets ]; then
             echo "splash asset must be deleted, not gated" >&2
             exit 1
           fi
-          if git grep -n -E 'omapi-mark|oma on|OMAPI_SPLASH|isatty|isTTY' -- ':!.github/workflows/ci.yml' ':!flake.nix'; then
+          # Product rename does not reopen a banner. Old mark and any Bezel mark stay banned.
+          if git grep -n -E 'omapi-mark|bezel-mark|oma on|OMAPI_SPLASH|BEZEL_SPLASH|isatty|isTTY' -- ':!.github/workflows/ci.yml' ':!flake.nix'; then
             echo "splash must be removed, not gated behind a TTY check" >&2
             exit 1
           fi
@@ -81,24 +82,31 @@ jobs:
         run: |
           for sys in aarch64-darwin x86_64-darwin aarch64-linux x86_64-linux; do
             echo "== eval packages.$sys =="
-            nix eval --raw ".#packages.$sys.omapi.pname"
-            nix eval --raw ".#packages.$sys.jev-router.pname"
-            nix eval --raw ".#packages.$sys.cursor-agent-jev.name"
-            nix eval --raw ".#packages.$sys.grok-build-jev.name"
+            test "$(nix eval --raw ".#packages.$sys.bezel.pname")" = bezel
+            test "$(nix eval --raw ".#packages.$sys.omapi.pname")" = bezel
+            test "$(nix eval --raw ".#packages.$sys.bezel-jev.pname")" = bezel-jev
+            test "$(nix eval --raw ".#packages.$sys.jev-router.pname")" = bezel-jev
+            test "$(nix eval --raw ".#packages.$sys.cursor-agent-bezel.name")" = cursor-agent-bezel
+            test "$(nix eval --raw ".#packages.$sys.grok-build-bezel.name")" = grok-build-bezel
             nix eval --json ".#packages.$sys.omp-pin.meta.platforms"
           done
 
-      - name: flake check (host packages; not omapi-pinned)
+      - name: flake check (host packages; not bezel-pinned)
         if: ${{ !matrix.skip }}
         run: nix flake check -L
 
       - name: build overlay packages (skip 180–240MB pin)
         if: ${{ !matrix.skip }}
         run: |
-          nix build -L .#omapi .#jev-router .#cursor-agent-jev .#grok-build-jev
-          test -x result/bin/omapi || test -x result-2/bin/jev-router || true
-          echo "omapi-pinned fetchurl skipped on GHA (build_omapi_pin=${{ matrix.build_omapi_pin }}; 180–240MB). Pin hashes are in packages/omp-pin.nix."
+          nix build -L .#bezel .#bezel-jev .#cursor-agent-bezel .#grok-build-bezel
+          test -x result/bin/bezel
+          test -x result/bin/omapi
+          test -x result-2/bin/bezel-jev
+          test -x result-2/bin/jev-router
+          test -x result-3/bin/cursor-agent-bezel
+          test -x result-4/bin/grok-build-bezel
+          echo "bezel-pinned fetchurl skipped on GHA (build_bezel_pin=${{ matrix.build_bezel_pin }}; 180–240MB). Pin hashes are in packages/omp-pin.nix."
 
-      - name: build omapi-pinned
-        if: ${{ !matrix.skip && matrix.build_omapi_pin }}
-        run: nix build -L .#omapi-pinned
+      - name: build bezel-pinned
+        if: ${{ !matrix.skip && matrix.build_bezel_pin }}
+        run: nix build -L .#bezel-pinned

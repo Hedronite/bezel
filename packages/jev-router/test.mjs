@@ -784,10 +784,11 @@ const cases = [
   }),
 
   test("wrap script does not flip permission catalogs or bake a key", () => {
-    const wrapPath = [join(here, "cursor-agent-jev.nix"), join(here, "..", "cursor-agent-jev.nix")].find((path) =>
-      existsSync(path),
-    );
-    assert.ok(wrapPath, "cursor-agent-jev.nix missing");
+    const wrapPath = [
+      join(here, "cursor-agent-bezel.nix"),
+      join(here, "..", "cursor-agent-bezel.nix"),
+    ].find((path) => existsSync(path));
+    assert.ok(wrapPath, "cursor-agent-bezel.nix missing");
     const wrap = readFileSync(wrapPath, "utf8");
     assert.equal(wrap.includes("JEV_PERMISSION_MODE"), false);
     assert.equal(wrap.includes("--schema"), true);
@@ -797,6 +798,7 @@ const cases = [
     assert.equal(wrap.includes("shadow Choice logged"), false);
     assert.equal(wrap.includes("JEV_BYPASS — skipping"), false);
     assert.equal(wrap.includes("cursor-agent-jev: verdict"), false);
+    assert.equal(wrap.includes("cursor-agent-bezel: verdict"), false);
     assert.equal(wrap.includes("stop/escalate do not exec"), true);
   }),
 
@@ -807,8 +809,10 @@ const cases = [
   }),
 
   test("planes shim does not print a launch banner", () => {
-    const shim = join(here, "..", "omapi-planes-shim.sh");
-    if (!existsSync(shim)) return;
+    const shim = [join(here, "bezel-planes-shim.sh"), join(here, "..", "bezel-planes-shim.sh")].find((path) =>
+      existsSync(path),
+    );
+    if (!shim) return;
     const text = readFileSync(shim, "utf8");
     assert.equal(text.includes("PLANES filter on"), false);
   }),
@@ -831,6 +835,7 @@ const cases = [
       assert.equal(result.stdout.endsWith("\n"), true, result.stdout);
       const body = result.stdout.slice(0, -1);
       assert.equal(body.includes("\n"), false, result.stdout);
+      assert.equal(body.includes("[bezel-jev]"), false);
       assert.equal(body.includes("[jev-router]"), false);
       assert.equal(body.includes("PLANES filter on"), false);
       return JSON.parse(body);
@@ -851,6 +856,7 @@ const cases = [
     const verdict = oneJson(shadow);
     assert.equal(verdict.missingKey, true);
     assert.equal(verdict.blocked, false);
+    assert.equal(shadow.stdout.includes("[bezel-jev]"), false);
     assert.equal(shadow.stdout.includes("[jev-router]"), false);
   }),
 
@@ -1966,6 +1972,7 @@ printf '%s\\n' '{"ok":true,"mode":"active","choice":"stop","gate":"hold","blocke
     assert.equal(smoke.stdout.includes('"decision":"allow"'), false);
 
     const mark = ["omapi", "mark"].join("-");
+    const bezelMark = ["bezel", "mark"].join("-");
     const banner = ["oma", "on"].join(" ");
     const quiet = (label, args, input) => {
       const run = spawnSync(process.execPath, [join(here, "harness.mjs"), ...args], {
@@ -1975,6 +1982,7 @@ printf '%s\\n' '{"ok":true,"mode":"active","choice":"stop","gate":"hold","blocke
       });
       const blob = `${run.stdout}\n${run.stderr}`;
       assert.equal(blob.includes(mark), false, label);
+      assert.equal(blob.includes(bezelMark), false, label);
       assert.equal(blob.includes(banner), false, label);
       return run;
     };

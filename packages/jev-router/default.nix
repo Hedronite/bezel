@@ -6,7 +6,8 @@
   makeWrapper,
 }:
 
-# Router-only package: jev-router.mjs + published @typesafe-ai/sdk.
+# Bezel Jev router: jev-router.mjs + published @typesafe-ai/sdk.
+# The program is `bezel-jev`. `jev-router` is the same program, for one transition.
 # No Eli config.json, logs, or card material. TYPESAFE_API_KEY is runtime only.
 
 let
@@ -18,7 +19,7 @@ let
   };
 in
 stdenvNoCC.mkDerivation {
-  pname = "jev-router";
+  pname = "bezel-jev";
   version = "0.1.0";
   src = ./.;
 
@@ -39,17 +40,18 @@ stdenvNoCC.mkDerivation {
     tar -xzf ${sdk} -C $out/lib/jev-router/node_modules/@typesafe-ai/sdk --strip-components=1
 
     mkdir -p $out/bin
-    makeWrapper ${lib.getExe nodejs} $out/bin/jev-router \
+    makeWrapper ${lib.getExe nodejs} $out/bin/bezel-jev \
       --add-flags "$out/lib/jev-router/jev-router.mjs" \
       --prefix NODE_PATH : "$out/lib/jev-router/node_modules"
+    ln -s bezel-jev $out/bin/jev-router
     # Secrets: never --set TYPESAFE_API_KEY / getEnv at build.
 
     runHook postInstall
   '';
 
   meta = {
-    description = "Router-only Jev Choice gate, tiny tool catalog, and shadow typed calls (runtime key)";
-    mainProgram = "jev-router";
+    description = "Bezel Jev router: Choice gate, tool catalog, and shadow typed calls (runtime key)";
+    mainProgram = "bezel-jev";
     license = lib.licenses.mit;
     platforms = lib.platforms.unix;
   };

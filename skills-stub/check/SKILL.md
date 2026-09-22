@@ -15,9 +15,9 @@ workflow when the user asks to check a diff against a task.
 export TYPESAFE_API_KEY   # host card store / your shell; omit to smoke without live Jev
 
 # Worktree + staged, or inject a unified diff:
-jev-router --check --intent "<task or request>"
-jev-router --check --intent "<task>" --base origin/main
-jev-router --check --intent "<task>" --diff-file path/to.diff
+bezel-jev --check --intent "<task or request>"
+bezel-jev --check --intent "<task>" --base origin/main
+bezel-jev --check --intent "<task>" --diff-file path/to.diff
 ```
 
 `JEV_MODE` defaults to `shadow`: Choice is logged; **shadow never blocks**.

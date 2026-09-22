@@ -1,5 +1,5 @@
 {
-  description = "Nix overlay: skills, Jev policy gates, and a tool catalog for an agent harness you already run.";
+  description = "Bezel: harness-agnostic Nix overlay. Skills, a Jev toolkit, and adapters for a harness you already run. Not Omarchy, not Omahedron, not an omp fork.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -49,19 +49,23 @@
       overlays.default = final: _prev: {
         omp-runtime = final.callPackage ./packages/omp-runtime.nix { };
         omp-pin = final.callPackage ./packages/omp-pin.nix { };
-        jev-router = final.callPackage ./packages/jev-router { };
-        omapi = final.callPackage ./packages/omapi-wrap.nix {
+        bezel-jev = final.callPackage ./packages/jev-router { };
+        bezel = final.callPackage ./packages/bezel-wrap.nix {
           ompBinary = final.omp-runtime;
-          jevRouter = final.jev-router;
+          jevRouter = final.bezel-jev;
         };
-        omapi-pinned = final.callPackage ./packages/omapi-wrap.nix {
+        bezel-pinned = final.callPackage ./packages/bezel-wrap.nix {
           ompBinary = final.omp-pin;
-          jevRouter = final.jev-router;
+          jevRouter = final.bezel-jev;
         };
-        cursor-agent-jev = final.callPackage ./packages/cursor-agent-jev.nix {
-          jev-router = final.jev-router;
-        };
-        grok-build-jev = final.callPackage ./packages/grok-build-jev.nix { };
+        cursor-agent-bezel = final.callPackage ./packages/cursor-agent-bezel.nix { };
+        grok-build-bezel = final.callPackage ./packages/grok-build-bezel.nix { };
+        # One transition. Same derivations as the Bezel names above.
+        jev-router = final.bezel-jev;
+        omapi = final.bezel;
+        omapi-pinned = final.bezel-pinned;
+        cursor-agent-jev = final.cursor-agent-bezel;
+        grok-build-jev = final.grok-build-bezel;
       };
 
       packages = forAllSystems (
@@ -71,6 +75,11 @@
         in
         {
           inherit (pkgs)
+            bezel
+            bezel-pinned
+            bezel-jev
+            cursor-agent-bezel
+            grok-build-bezel
             omapi
             omapi-pinned
             jev-router
@@ -79,26 +88,43 @@
             omp-runtime
             omp-pin
             ;
-          default = pkgs.omapi;
+          default = pkgs.bezel;
         }
       );
 
       apps = forAllSystems (system: {
+        bezel = {
+          type = "app";
+          program = lib.getExe self.packages.${system}.bezel;
+        };
+        bezel-jev = {
+          type = "app";
+          program = lib.getExe self.packages.${system}.bezel-jev;
+        };
+        cursor-agent-bezel = {
+          type = "app";
+          program = lib.getExe self.packages.${system}.cursor-agent-bezel;
+        };
+        grok-build-bezel = {
+          type = "app";
+          program = lib.getExe self.packages.${system}.grok-build-bezel;
+        };
+        # Same programs as the Bezel apps. Previous command names.
         omapi = {
           type = "app";
-          program = lib.getExe self.packages.${system}.omapi;
+          program = lib.getExe self.packages.${system}.bezel;
         };
         jev-router = {
           type = "app";
-          program = lib.getExe self.packages.${system}.jev-router;
+          program = lib.getExe self.packages.${system}.bezel-jev;
         };
         cursor-agent-jev = {
           type = "app";
-          program = lib.getExe self.packages.${system}.cursor-agent-jev;
+          program = lib.getExe self.packages.${system}.cursor-agent-bezel;
         };
         grok-build-jev = {
           type = "app";
-          program = lib.getExe self.packages.${system}.grok-build-jev;
+          program = lib.getExe self.packages.${system}.grok-build-bezel;
         };
       });
 
@@ -110,22 +136,28 @@
           pkgs = pkgsFor system;
         in
         {
-          # Cheap overlay packages. omapi-pinned is NOT a check:
+          # Cheap overlay packages. bezel-pinned is NOT a check:
           # it fetchurls the 180–240MB pinned oh-my-pi binary.
-          omapi = self.packages.${system}.omapi;
-          jev-router = self.packages.${system}.jev-router;
-          cursor-agent-jev = self.packages.${system}.cursor-agent-jev;
-          grok-build-jev = self.packages.${system}.grok-build-jev;
+          bezel = self.packages.${system}.bezel;
+          bezel-jev = self.packages.${system}.bezel-jev;
+          cursor-agent-bezel = self.packages.${system}.cursor-agent-bezel;
+          grok-build-bezel = self.packages.${system}.grok-build-bezel;
 
-          omapi-wrap-contract = pkgs.runCommand "omapi-wrap-contract" { } ''
+          bezel-wrap-contract = pkgs.runCommand "bezel-wrap-contract" { } ''
             set -eu
-            wrap="${self.packages.${system}.omapi}/bin/omapi"
+            wrap="${lib.getExe self.packages.${system}.bezel}"
             test -x "$wrap"
+            test -x "${self.packages.${system}.bezel}/bin/omapi"
+            test -x "${self.packages.${system}.bezel-jev}/bin/jev-router"
+            test -x "${self.packages.${system}.cursor-agent-bezel}/bin/cursor-agent-jev"
+            test -x "${self.packages.${system}.grok-build-bezel}/bin/grok-build-jev"
+            grep -q BEZEL_OVERLAY "$wrap"
             grep -q OMAPI_OVERLAY "$wrap"
-            grep -q 'makeWrapper\|OMAPI_OVERLAY' "$wrap"
-            test -x "${self.packages.${system}.omapi}/libexec/omapi-planes-shim"
+            grep -q 'makeWrapper\|BEZEL_OVERLAY' "$wrap"
+            test -x "${self.packages.${system}.bezel}/libexec/bezel-planes-shim"
+            test -x "${self.packages.${system}.bezel}/libexec/omapi-planes-shim"
             if grep -E -- '--set(=| )TYPESAFE_API_KEY' "$wrap"; then
-              echo "omapi wrapper must not bake TYPESAFE_API_KEY" >&2
+              echo "bezel wrapper must not bake TYPESAFE_API_KEY" >&2
               exit 1
             fi
 
@@ -144,18 +176,18 @@
             echo "$got" | grep -q -- '--version'
             # Launch is quiet. No splash mark and no startup flourish on stdout or stderr.
             if [ -s "$errf" ]; then
-              echo "omapi launch wrote to stderr:" >&2
+              echo "bezel launch wrote to stderr:" >&2
               cat "$errf" >&2
               exit 1
             fi
-            if grep -F 'oma on' "$outf" "$wrap" || grep -F 'omapi-mark' "$outf" "$wrap"; then
-              echo "omapi launch printed a splash banner" >&2
+            if grep -F 'oma on' "$outf" "$wrap" || grep -F 'omapi-mark' "$outf" "$wrap" || grep -F 'bezel-mark' "$outf" "$wrap"; then
+              echo "bezel launch printed a splash banner" >&2
               exit 1
             fi
             errp="$(mktemp)"
             OMAPI_PLANES=1 OMP_BIN="$fake" "$wrap" --version >/dev/null 2>"$errp"
             if [ -s "$errp" ]; then
-              echo "omapi launch wrote to stderr with the pre-exec filter on:" >&2
+              echo "bezel launch wrote to stderr with the pre-exec filter on:" >&2
               cat "$errp" >&2
               exit 1
             fi
@@ -163,14 +195,14 @@
             echo ok >"$out"
           '';
 
-          # Quiet launch: no banner on the wrap, the planes shim, or jev-router
-          # stdout. Success exec of cursor-agent-jev does not prefix the child.
-          omapi-launch-quiet = pkgs.runCommand "omapi-launch-quiet" { nativeBuildInputs = [ pkgs.jq ]; } ''
+          # Quiet launch: no banner on the wrap, the planes shim, or bezel-jev
+          # stdout. Success exec of cursor-agent-bezel does not prefix the child.
+          bezel-launch-quiet = pkgs.runCommand "bezel-launch-quiet" { nativeBuildInputs = [ pkgs.jq ]; } ''
             set -eu
-            wrap="${self.packages.${system}.omapi}/bin/omapi"
-            shim="${self.packages.${system}.omapi}/libexec/omapi-planes-shim"
-            router="${lib.getExe self.packages.${system}.jev-router}"
-            caj="${lib.getExe self.packages.${system}.cursor-agent-jev}"
+            wrap="${lib.getExe self.packages.${system}.bezel}"
+            shim="${self.packages.${system}.bezel}/libexec/bezel-planes-shim"
+            router="${lib.getExe self.packages.${system}.bezel-jev}"
+            caj="${lib.getExe self.packages.${system}.cursor-agent-bezel}"
             outf="$(mktemp)"
             errf="$(mktemp)"
 
@@ -178,7 +210,7 @@
               echo "planes shim still has a launch banner" >&2
               exit 1
             fi
-            if grep -F 'Cursor/omp writer' "${self.packages.${system}.jev-router}/lib/jev-router/jev-router.mjs"; then
+            if grep -F 'Cursor/omp writer' "${self.packages.${system}.bezel-jev}/lib/jev-router/jev-router.mjs"; then
               echo "route prompt still assumes an omp writer" >&2
               exit 1
             fi
@@ -243,7 +275,7 @@
             env -u TYPESAFE_API_KEY -u JEV_BYPASS JEV_MODE=shadow "$router" "probe intent" >"$outf" 2>"$errf"
             test "$(grep -c . "$outf")" -eq 1
             jq -e '.missingKey == true and .blocked == false' <"$outf" >/dev/null
-            if grep -F '[jev-router]' "$outf"; then
+            if grep -F '[bezel-jev]' "$outf" || grep -F '[jev-router]' "$outf"; then
               echo "router log leaked onto stdout" >&2
               exit 1
             fi
@@ -310,7 +342,7 @@
 
           jev-bypass = pkgs.runCommand "jev-bypass" { } ''
             set -eu
-            router="${lib.getExe self.packages.${system}.jev-router}"
+            router="${lib.getExe self.packages.${system}.bezel-jev}"
             jq="${lib.getExe pkgs.jq}"
             outj="$(JEV_BYPASS=1 "$router" "probe intent")"
             echo "$outj" | "$jq" -e '.bypass == true and .gate == "auto" and .blocked == false'
@@ -327,15 +359,16 @@
             cp -r ${./packages/jev-router}/. .
             cp ${./docs/POLICY-MAP.md} ./POLICY-MAP.md
             cp ${./docs/GROK-BUILD.md} ./GROK-BUILD.md
-            cp ${./packages/cursor-agent-jev.nix} ./cursor-agent-jev.nix
-            JEV_ROUTER_BIN="${lib.getExe self.packages.${system}.jev-router}" node test.mjs
+            cp ${./packages/cursor-agent-bezel.nix} ./cursor-agent-bezel.nix
+            cp ${./packages/bezel-planes-shim.sh} ./bezel-planes-shim.sh
+            JEV_ROUTER_BIN="${lib.getExe self.packages.${system}.bezel-jev}" node test.mjs
             echo ok >"$out"
           '';
 
           # Shadow --check without TYPESAFE_API_KEY: continues, never "approved".
           jev-check-shadow = pkgs.runCommand "jev-check-shadow" { nativeBuildInputs = [ pkgs.jq ]; } ''
             set -eu
-            router="${lib.getExe self.packages.${system}.jev-router}"
+            router="${lib.getExe self.packages.${system}.bezel-jev}"
             skip="${./packages/jev-router/testdata/skip-marker.diff}"
             empty="${./packages/jev-router/testdata/empty.diff}"
 
@@ -363,7 +396,7 @@
           # Shadow always execs; active stop/escalate do not; continue/auto execs.
           jev-loop-stop-wrap = pkgs.runCommand "jev-loop-stop-wrap" { nativeBuildInputs = [ pkgs.jq ]; } ''
             set -eu
-            wrap="${lib.getExe self.packages.${system}.cursor-agent-jev}"
+            wrap="${lib.getExe self.packages.${system}.cursor-agent-bezel}"
             work="$(mktemp -d)"
             mkdir -p "$work/bin"
 
@@ -443,8 +476,8 @@
           # call and never an allow. No live Jev.
           jev-tool-catalog = pkgs.runCommand "jev-tool-catalog" { nativeBuildInputs = [ pkgs.jq ]; } ''
             set -eu
-            router="${lib.getExe self.packages.${system}.jev-router}"
-            wrap="${lib.getExe self.packages.${system}.cursor-agent-jev}"
+            router="${lib.getExe self.packages.${system}.bezel-jev}"
+            wrap="${lib.getExe self.packages.${system}.cursor-agent-bezel}"
             work="$(mktemp -d)"
             mkdir -p "$work/bin"
 
@@ -524,7 +557,7 @@
           # permission shadow vs active. No live Jev and no API key.
           grok-build-harness = pkgs.runCommand "grok-build-harness" { nativeBuildInputs = [ pkgs.jq ]; } ''
             set -eu
-            bin="${lib.getExe self.packages.${system}.grok-build-jev}"
+            bin="${lib.getExe self.packages.${system}.grok-build-bezel}"
 
             smoke="$("$bin" smoke)"
             echo "$smoke" | jq -e '.ok == true'
@@ -551,7 +584,7 @@
 
             cfg="$("$bin" config)"
             echo "$cfg" | jq -e '.hooks.PreToolUse | length == 1'
-            echo "$cfg" | jq -e '.hooks.PreToolUse[0].hooks[0].command == "grok-build-jev hook"'
+            echo "$cfg" | jq -e '.hooks.PreToolUse[0].hooks[0].command == "grok-build-bezel hook"'
             if echo "$cfg" | grep -E 'TYPESAFE_API_KEY|JEV_MODE|JEV_PERMISSION_MODE|JEV_TYPED_CALL_MODE' >/dev/null; then
               echo "config must not set a mode or a key" >&2
               exit 1
@@ -620,16 +653,16 @@
             "$bin" catalog >"$cat_out" 2>"$cat_err"
             test ! -s "$cat_err"
             jq -e '.kind == "tiny"' <"$cat_out" >/dev/null
-            if grep -F 'oma on' "$cat_out" "$cat_err" || grep -F 'omapi-mark' "$cat_out" "$cat_err"; then
-              echo "grok-build-jev catalog printed a splash" >&2
+            if grep -F 'oma on' "$cat_out" "$cat_err" || grep -F 'omapi-mark' "$cat_out" "$cat_err" || grep -F 'bezel-mark' "$cat_out" "$cat_err"; then
+              echo "grok-build-bezel catalog printed a splash" >&2
               exit 1
             fi
             hook_out="$(mktemp)"
             hook_err="$(mktemp)"
             : | JEV_MODE=shadow JEV_BYPASS= "$bin" hook >"$hook_out" 2>"$hook_err"
             jq -e '.decision == "defer"' <"$hook_out"
-            if grep -F 'oma on' "$hook_out" "$hook_err" || grep -F 'omapi-mark' "$hook_out" "$hook_err"; then
-              echo "grok-build-jev hook printed a splash" >&2
+            if grep -F 'oma on' "$hook_out" "$hook_err" || grep -F 'omapi-mark' "$hook_out" "$hook_err" || grep -F 'bezel-mark' "$hook_out" "$hook_err"; then
+              echo "grok-build-bezel hook printed a splash" >&2
               exit 1
             fi
 

@@ -38,9 +38,9 @@ let
 
   source =
     sources.${system} or (throw ''
-      omapi-overlay: no oh-my-pi ${version} binary for system '${system}'.
+      bezel: no oh-my-pi ${version} binary for system '${system}'.
       Documented pins: ${lib.concatStringsSep ", " (lib.attrNames sources)}.
-      Do not fake a green build — mark skip in CI or set OMP_BIN and use omapi (runtime wrap).
+      Do not fake a green build — mark skip in CI or set OMP_BIN and use bezel (runtime wrap).
     '');
 in
 stdenvNoCC.mkDerivation {
@@ -64,7 +64,7 @@ stdenvNoCC.mkDerivation {
   '';
 
   meta = {
-    description = "Fetched oh-my-pi v${version} binary used by omapi-pinned";
+    description = "Fetched oh-my-pi v${version} binary used by bezel-pinned";
     homepage = "https://github.com/can1357/oh-my-pi";
     downloadPage = "https://github.com/can1357/oh-my-pi/releases/tag/v${version}";
     license = lib.licenses.mit;

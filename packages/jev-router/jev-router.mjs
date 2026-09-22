@@ -15,7 +15,7 @@
  *                    (read effect, thresholds met). Key absent stays shadow.
  *                    Do not set this in the flake. Grok hooks leave MCP on
  *                    ask until this surface is merged and the operator flips it.
- *   JEV_BYPASS        1|true skips the Choice call (same predicate as cursor-agent-jev)
+ *   JEV_BYPASS        1|true skips the Choice call (same predicate as cursor-agent-bezel)
  *   JEV_MODEL         optional, default jev-latest
  *   JEV_INTENT        fallback when no argv intent
  *   JEV_STEP_DIGEST   optional trajectory / step digest for loop-stop
@@ -210,7 +210,7 @@ function emit(obj) {
 }
 
 function log(msg) {
-  process.stderr.write(`[jev-router] ${msg}\n`);
+  process.stderr.write(`[bezel-jev] ${msg}\n`);
 }
 
 function evidenceOpts(args) {

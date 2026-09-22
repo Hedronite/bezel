@@ -1,6 +1,6 @@
-# PreToolUse policy ids
+# Bezel PreToolUse policy ids
 
-Grok hooks and this overlay share one map and one `JEV_BYPASS` predicate.
+Grok hooks and Bezel share one map and one `JEV_BYPASS` predicate.
 The hook calls `jev-router`. It does not construct a TypeSafe client.
 
 Canonical matcher and class table: `PRETOOL_MATCHER` / `PRETOOL_CLASSES` in
@@ -9,7 +9,7 @@ module wins — `node packages/jev-router/test.mjs` checks the fence below.
 
 ## GateVerdict
 
-`jev-router` prints one JSON object. `cursor-agent-jev` and the Grok hook
+`bezel-jev` prints one JSON object. `cursor-agent-bezel` and the Grok hook
 both read it. There is no second verdict type.
 
 | Field | Values | Who decides |
@@ -83,7 +83,7 @@ One `PreToolUse` entry. Do not add a second hook group for the new classes.
 
 ## JEV_BYPASS
 
-One predicate, in `isJevBypass` and in `packages/cursor-agent-jev.nix`:
+One predicate, in `isJevBypass` and in `packages/cursor-agent-bezel.nix`:
 
 ```sh
 [ "${JEV_BYPASS:-0}" = "1" ] || [ "${JEV_BYPASS:-}" = "true" ]
@@ -306,10 +306,10 @@ How to run: [SPIKE-calls.md](SPIKE-calls.md).
 
 ## Grok Build harness
 
-`grok-build-jev` is the PreToolUse entrypoint for the controls on this page.
-It calls `jev-router` and maps the GateVerdict with `pretoolHookDecision`.
+`grok-build-bezel` is the PreToolUse entrypoint for the controls on this page.
+It calls `bezel-jev` and maps the GateVerdict with `pretoolHookDecision`.
 It does not construct a TypeSafe client and it does not keep a second class
-map. `grok-build-jev config` prints one hook group whose `matcher` is
+map. `grok-build-bezel config` prints one hook group whose `matcher` is
 `PRETOOL_MATCHER`. The printed document does not set `JEV_MODE`,
 `JEV_PERMISSION_MODE`, `JEV_TYPED_CALL_MODE`, or `TYPESAFE_API_KEY`.
 

@@ -1,7 +1,7 @@
-# SPIKE — tiny tool catalog + schema dump
+# Bezel tool catalog and schema dump
 
-Give `cursor-agent-jev` a **tiny always-on catalog** of the PreToolUse tools,
-and an on-demand **schema dump** for one tool. Same `jev-router`, same three
+Give `cursor-agent-bezel` a **tiny always-on catalog** of the PreToolUse tools,
+and an on-demand **schema dump** for one tool. Same `bezel-jev`, same three
 policy ids, no second TypeSafe client.
 
 The index is class + `policyId` + tool names. JSON Schema is not in it.
@@ -25,7 +25,7 @@ Every GateVerdict includes `catalog`:
 }
 ```
 
-`cursor-agent-jev` exports that object as `JEV_TOOL_CATALOG` before it execs
+`cursor-agent-bezel` exports that object as `JEV_TOOL_CATALOG` before it execs
 `cursor-agent`. `JEV_BYPASS=1` still skips the Choice and still exports the
 index. The Choice `state` gets the same index (`buildGateState`). The API key
 is not copied into that state.
@@ -33,10 +33,10 @@ is not copied into that state.
 ## Schema dump
 
 ```sh
-jev-router --catalog
-jev-router --schema Bash
-cursor-agent-jev --schema search_replace
-cursor-agent-jev --schema-dump linear__save_issue
+bezel-jev --catalog
+bezel-jev --schema Bash
+cursor-agent-bezel --schema search_replace
+cursor-agent-bezel --schema-dump linear__save_issue
 ```
 
 These commands print JSON and exit. They do not exec `cursor-agent` and they

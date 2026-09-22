@@ -1,7 +1,7 @@
-# Loop-stop and escalate
+# Bezel loop-stop and escalate
 
-Give `jev-router` a **continue / stop / escalate** decision over intent plus an
-optional step digest, and honor it in `cursor-agent-jev`.
+Give `bezel-jev` a **continue / stop / escalate** decision over intent plus an
+optional step digest, and honor it in `cursor-agent-bezel`.
 **Do not** vendor [stanley-code](https://github.com/devagrawal09/stanley-code),
 call another agent binary, or auto-promote a candidate.
 

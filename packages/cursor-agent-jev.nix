@@ -4,6 +4,8 @@
 # cursor-agent-jev --catalog
 # cursor-agent-jev --schema TOOL
 # JEV_ROUTER / JEV_MODE / JEV_BYPASS / JEV_STEP_DIGEST at runtime. Shadow never blocks.
+# Success exec is silent: no launch line, and the router's stderr is not
+# forwarded onto the child. Failures still explain on stderr.
 # JEV_BYPASS is only "1" or "true" — same predicate as isJevBypass in
 # packages/jev-router/policy.mjs. Do not add another spelling here.
 # Active: stop/escalate do NOT exec; continue / gate=auto execs. Escalate is HITL.
@@ -70,7 +72,6 @@ writeShellApplication {
     fi
 
     if [ "''${JEV_BYPASS:-0}" = "1" ] || [ "''${JEV_BYPASS:-}" = "true" ]; then
-      echo "cursor-agent-jev: JEV_BYPASS — skipping gate, exec cursor-agent" >&2
       cat_tmp="$(mktemp)"
       if "$router" --catalog >"$cat_tmp" 2>/dev/null; then
         line="$(jq -c 'select(.kind == "tiny")' <"$cat_tmp" 2>/dev/null || true)"
@@ -84,20 +85,17 @@ writeShellApplication {
     fi
 
     tmp="$(mktemp)"
-    trap 'rm -f "$tmp"' EXIT
+    router_err="$(mktemp)"
+    trap 'rm -f "$tmp" "$router_err"' EXIT
 
     set +e
     if [ -n "$step_digest" ]; then
-      JEV_MODE="$mode" JEV_STEP_DIGEST="$step_digest" "$router" --step-digest "$step_digest" "$intent" >"$tmp"
+      JEV_MODE="$mode" JEV_STEP_DIGEST="$step_digest" "$router" --step-digest "$step_digest" "$intent" >"$tmp" 2>"$router_err"
     else
-      JEV_MODE="$mode" "$router" "$intent" >"$tmp"
+      JEV_MODE="$mode" "$router" "$intent" >"$tmp" 2>"$router_err"
     fi
     router_rc=$?
     set -e
-
-    if [ -s "$tmp" ]; then
-      echo "cursor-agent-jev: verdict $(tr -d '\n' <"$tmp")" >&2
-    fi
 
     choice="$(jq -r '.choice // "unclassified"' <"$tmp" 2>/dev/null || echo unclassified)"
     gate="$(jq -r '.gate // "hold"' <"$tmp" 2>/dev/null || echo hold)"
@@ -113,7 +111,8 @@ writeShellApplication {
       if [ "$router_rc" -ne 0 ]; then
         echo "cursor-agent-jev: router rc=$router_rc; shadow does not block" >&2
       fi
-      echo "cursor-agent-jev: shadow Choice logged choice=$choice gate=$gate; exec cursor-agent (does not block)" >&2
+      rm -f "$tmp" "$router_err"
+      trap - EXIT
       exec cursor-agent "$@"
     fi
 
@@ -137,7 +136,8 @@ writeShellApplication {
       exit 2
     fi
 
-    echo "cursor-agent-jev: active choice=$choice gate=$gate — exec cursor-agent" >&2
+    rm -f "$tmp" "$router_err"
+    trap - EXIT
     exec cursor-agent "$@"
   '';
 }

@@ -163,6 +163,151 @@
             echo ok >"$out"
           '';
 
+          # Quiet launch: no banner on the wrap, the planes shim, or jev-router
+          # stdout. Success exec of cursor-agent-jev does not prefix the child.
+          omapi-launch-quiet = pkgs.runCommand "omapi-launch-quiet" { nativeBuildInputs = [ pkgs.jq ]; } ''
+            set -eu
+            wrap="${self.packages.${system}.omapi}/bin/omapi"
+            shim="${self.packages.${system}.omapi}/libexec/omapi-planes-shim"
+            router="${lib.getExe self.packages.${system}.jev-router}"
+            caj="${lib.getExe self.packages.${system}.cursor-agent-jev}"
+            outf="$(mktemp)"
+            errf="$(mktemp)"
+
+            if grep -F 'PLANES filter on' "$shim"; then
+              echo "planes shim still has a launch banner" >&2
+              exit 1
+            fi
+            if grep -F 'Cursor/omp writer' "${self.packages.${system}.jev-router}/lib/jev-router/jev-router.mjs"; then
+              echo "route prompt still assumes an omp writer" >&2
+              exit 1
+            fi
+
+            OMAPI_PLANES=1 OMAPI_OVERLAY=1 "$shim" >"$outf" 2>"$errf"
+            test ! -s "$outf"
+            test ! -s "$errf"
+
+            verdict="$(mktemp)"
+            printf 'gate=hold\n' >"$verdict"
+            set +e
+            OMAPI_PLANES=1 OMAPI_PLANES_VERDICT="$verdict" "$shim" >"$outf" 2>"$errf"
+            rc=$?
+            set -e
+            test "$rc" -eq 2
+            test ! -s "$outf"
+            grep -q 'gate=hold' "$errf"
+            if grep -F 'PLANES filter on' "$errf"; then
+              echo "planes hold printed a launch banner" >&2
+              exit 1
+            fi
+
+            fake="$(mktemp)"
+            cat >"$fake" <<'EOS'
+            #!/bin/sh
+            printf 'fake-omp overlay=%s planes=%s args=%s\n' "''${OMAPI_OVERLAY-}" "''${OMAPI_PLANES-}" "$*"
+            EOS
+            chmod +x "$fake"
+
+            OMP_BIN="$fake" "$wrap" --version >"$outf" 2>"$errf"
+            test "$(grep -c . "$outf")" -eq 1
+            grep -q 'overlay=1' "$outf"
+            grep -q -- '--version' "$outf"
+            test ! -s "$errf"
+
+            OMAPI_PLANES=1 OMP_BIN="$fake" "$wrap" --version >"$outf" 2>"$errf"
+            test "$(grep -c . "$outf")" -eq 1
+            grep -q 'planes=1' "$outf"
+            test ! -s "$errf"
+
+            set +e
+            OMAPI_PLANES=1 OMAPI_PLANES_VERDICT="$verdict" OMP_BIN="$fake" "$wrap" --version >"$outf" 2>"$errf"
+            rc=$?
+            set -e
+            test "$rc" -eq 2
+            test ! -s "$outf"
+            if grep -q 'fake-omp' "$outf"; then
+              echo "planes hold must not exec omp" >&2
+              exit 1
+            fi
+
+            JEV_MODE=shadow TYPESAFE_API_KEY= "$router" --catalog >"$outf" 2>"$errf"
+            test "$(grep -c . "$outf")" -eq 1
+            jq -e '.kind == "tiny"' <"$outf" >/dev/null
+            test ! -s "$errf"
+
+            JEV_MODE=shadow TYPESAFE_API_KEY= "$router" --schema Bash >"$outf" 2>"$errf"
+            test "$(grep -c . "$outf")" -eq 1
+            jq -e '.call == "schema-dump" and .decision == "defer" and .autoAllow == false' <"$outf" >/dev/null
+            test ! -s "$errf"
+
+            JEV_MODE=shadow JEV_BYPASS= TYPESAFE_API_KEY= "$router" "probe intent" >"$outf" 2>"$errf"
+            test "$(grep -c . "$outf")" -eq 1
+            jq -e '.missingKey == true and .blocked == false' <"$outf" >/dev/null
+            if grep -F '[jev-router]' "$outf"; then
+              echo "router log leaked onto stdout" >&2
+              exit 1
+            fi
+
+            work="$(mktemp -d)"
+            mkdir -p "$work/bin"
+            cat >"$work/bin/cursor-agent" <<'EOS'
+            #!/bin/sh
+            printf 'agent:%s\n' "$*"
+            EOS
+            chmod +x "$work/bin/cursor-agent"
+            cat >"$work/bin/router-ok" <<'EOS'
+            #!/bin/sh
+            echo "router-stderr-must-not-leak" >&2
+            printf '%s\n' '{"ok":true,"choice":"continue","gate":"auto","blocked":false,"exec":true,"catalog":{"kind":"tiny"}}'
+            EOS
+            chmod +x "$work/bin/router-ok"
+            cat >"$work/bin/router-stop" <<'EOS'
+            #!/bin/sh
+            echo "router-stderr-must-not-leak" >&2
+            printf '%s\n' '{"ok":true,"choice":"stop","gate":"hold","blocked":true,"exec":false,"hitl":false}'
+            EOS
+            chmod +x "$work/bin/router-stop"
+
+            export PATH="$work/bin:$PATH"
+
+            JEV_MODE=shadow JEV_BYPASS= JEV_ROUTER="$work/bin/router-ok" "$caj" intent -- --probe >"$outf" 2>"$errf"
+            test "$(grep -c . "$outf")" -eq 1
+            grep -q 'agent:--probe' "$outf"
+            test ! -s "$errf"
+            if grep -F 'router-stderr-must-not-leak' "$outf" "$errf"; then
+              echo "shadow exec forwarded router stderr" >&2
+              exit 1
+            fi
+
+            JEV_BYPASS=1 JEV_ROUTER="$work/bin/router-ok" "$caj" intent -- --probe >"$outf" 2>"$errf"
+            test "$(grep -c . "$outf")" -eq 1
+            grep -q 'agent:--probe' "$outf"
+            test ! -s "$errf"
+
+            JEV_MODE=active JEV_BYPASS= JEV_ROUTER="$work/bin/router-ok" "$caj" intent -- --probe >"$outf" 2>"$errf"
+            test "$(grep -c . "$outf")" -eq 1
+            grep -q 'agent:--probe' "$outf"
+            test ! -s "$errf"
+
+            set +e
+            JEV_MODE=active JEV_BYPASS= JEV_ROUTER="$work/bin/router-stop" "$caj" intent -- --probe >"$outf" 2>"$errf"
+            rc=$?
+            set -e
+            test "$rc" -eq 2
+            test ! -s "$outf"
+            grep -q 'stop/escalate do not exec' "$errf"
+            if grep -F 'router-stderr-must-not-leak' "$errf"; then
+              echo "active stop forwarded router stderr" >&2
+              exit 1
+            fi
+            if grep -F 'agent:' "$outf"; then
+              echo "active stop must not exec cursor-agent" >&2
+              exit 1
+            fi
+
+            echo ok >"$out"
+          '';
+
           jev-bypass = pkgs.runCommand "jev-bypass" { } ''
             set -eu
             router="${lib.getExe self.packages.${system}.jev-router}"

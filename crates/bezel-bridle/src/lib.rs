@@ -6,10 +6,13 @@ mod calls;
 mod catalog;
 mod check;
 mod cli;
+mod facts;
 mod harness;
+mod judge;
 mod loop_stop;
 mod permission;
 mod policy;
+mod router;
 mod transport;
 
 pub use calls::tool_call;
@@ -19,14 +22,17 @@ pub use check::{
     write_flags, CheckReport, Hunk, OfflineCheck,
 };
 pub use cli::{fixture_client, run as cli_run, LIVE_COMMAND, LIVE_ON};
+pub use facts::{clip_to_max_hunk_chars, gather, gather_diff, write_tool_wire, Edit, GatherOpts, WriteBody};
+pub use judge::{matches_recorded, recorded_answer, CHECK_JUDGE, MAIN_GATE, SHADOW_WORKFLOW};
 pub use harness::{
     decide_hook, hook_command, hook_on_text, hook_stdout, modes_from_env, parse_hook_event, HookEvent, Modes,
 };
 pub use loop_stop::{apply_loop_stop_thresholds, LoopStopDecision};
 pub use permission::{active_hook, write_from_flags, WriteVerdict};
+pub use router::bash_no_key;
 pub use policy::{
     hook_decision, match_pretool_class, pretool_hook_decision, pretool_stamp, GateVerdict, HookOut, AUTO_ALLOW,
-    CHECK_POLICY_ID, CONCERN_PARK, LOOP_STOP_MIN_CONFIDENCE, LOOP_STOP_MIN_MARGIN, LOOP_STOP_MIN_PROBABILITY,
+    CHECK_POLICY_ID, CONCERN_PARK, MAX_HUNK_CHARS, LOOP_STOP_MIN_CONFIDENCE, LOOP_STOP_MIN_MARGIN, LOOP_STOP_MIN_PROBABILITY,
     LOOP_STOP_POLICY_ID, ROUTING_POLICY_ID, WRITE_CODE_DENY_FLAGS,
 };
 
@@ -520,10 +526,10 @@ mod tests {
             let recorded = std::fs::read(&path).expect(name);
             let replayed = client.system_one(name).expect(name);
             assert_eq!(replayed, recorded, "{name}");
-            assert_eq!(replayed.last().copied(), Some(b'\n'));
+            assert!(matches_recorded(&replayed, &recorded));
             let mut paraphrased = recorded.clone();
             paraphrased.pop();
-            assert_ne!(replayed, paraphrased, "{name}");
+            assert!(!matches_recorded(&paraphrased, &recorded), "{name}");
         }
         assert!(client.system_one("missing.json").is_err());
 
@@ -551,5 +557,201 @@ mod tests {
                 assert!(!text.contains(&live), "{name}");
             }
         }
+    }
+
+    #[test]
+    fn g2_three_system_one_sites_byte_match_the_node_answer() {
+        assert!(!LIVE_ON);
+        let client = fixture_client();
+        let sites = [
+            (CHECK_JUDGE, "check-judge.json"),
+            (SHADOW_WORKFLOW, "shadow-workflow.json"),
+            (MAIN_GATE, "main-gate.json"),
+        ];
+        for (site, name) in sites {
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../packages/jev-router/testdata/system-one")
+                .join(name);
+            let recorded = std::fs::read(&path).expect(site);
+            let replayed = recorded_answer(&client, site).expect(site);
+            assert!(matches_recorded(&replayed, &recorded), "{site}");
+            let text = String::from_utf8(recorded.clone()).expect(site);
+            assert!(text.contains("\"model\":\"jev-latest\""), "{site}");
+            assert!(text.contains("\"type\":"), "{site}");
+            let paraphrase = text.replace("\"type\":\"choice\"", "\"kind\":\"choice\"");
+            assert!(!matches_recorded(paraphrase.as_bytes(), &recorded), "{site}");
+        }
+        let call = tool_call();
+        assert_eq!(call.transport, "facet");
+        assert!(!call.initiated);
+    }
+
+    fn router_golden(name: &str) -> String {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/jev-router/testdata/router")
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()))
+    }
+
+    fn clean_repo() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("bezel-router-g3-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            let run = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .env("HOME", &dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "jev")
+                .env("GIT_AUTHOR_EMAIL", "jev@example.com")
+                .env("GIT_COMMITTER_NAME", "jev")
+                .env("GIT_COMMITTER_EMAIL", "jev@example.com")
+                .output()
+                .unwrap_or_else(|err| panic!("git {}: {err}", args.join(" ")));
+            assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+        };
+        git(&["init"]);
+        git(&[
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "user.name=jev",
+            "-c",
+            "user.email=jev@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "init",
+        ]);
+        dir
+    }
+
+    #[test]
+    fn g3_bash_no_key_matches_node_active_and_shadow() {
+        let repo = clean_repo();
+        let active = bash_no_key("active", &repo);
+        let shadow = bash_no_key("shadow", &repo);
+        assert_eq!(active, router_golden("bash-active.json"));
+        assert_eq!(shadow, router_golden("bash-shadow.json"));
+        assert!(active.contains("\"missingKey\":true"));
+        assert!(active.contains("\"choice\":\"escalate\""));
+        assert!(active.contains("\"gate\":\"hold\""));
+        assert!(active.contains("\"policy\":\"omapi-loop-stop-policy@1\""));
+        assert!(!active.contains("jev uncertain"));
+        assert!(shadow.contains("\"blocked\":false"));
+        assert!(shadow.contains("\"choice\":\"unclassified\""));
+        assert!(!shadow.contains("\"blocked\":true"));
+        assert!(!shadow.contains("jev uncertain"));
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    fn facts_golden(name: &str) -> String {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/jev-router/testdata/facts")
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()))
+    }
+
+    #[test]
+    fn g1_gather_matches_facts_mjs_on_the_same_fixtures() {
+        assert_eq!(clip_to_max_hunk_chars("abc", Some(2)), "ab");
+        assert_eq!(MAX_HUNK_CHARS, 4000);
+
+        let contents = WriteBody {
+            path: "notes/a.md".to_string(),
+            contents: Some("hello\n".to_string()),
+            ..WriteBody::default()
+        };
+        assert_eq!(write_tool_wire(&contents), facts_golden("wire-contents.txt"));
+
+        let edits = WriteBody {
+            path: "src/a.test.js".to_string(),
+            edits: Some(vec![Edit {
+                old_string: "expect(1)".to_string(),
+                new_string: "expect(2)".to_string(),
+            }]),
+            ..WriteBody::default()
+        };
+        assert_eq!(write_tool_wire(&edits), facts_golden("wire-edits.txt"));
+
+        let long = WriteBody {
+            file_path: Some("notes/a.md".to_string()),
+            old_string: Some("old".to_string()),
+            new_string: Some("Z".repeat(5000)),
+            ..WriteBody::default()
+        };
+        let wire = write_tool_wire(&long);
+        assert_eq!(wire, facts_golden("wire-long.txt"));
+        assert!(wire.contains("\"proposed\":"));
+        assert!(!wire.ends_with("src/app.js"));
+        assert_eq!(write_tool_wire(&WriteBody {
+            file_path: Some("src/app.js".to_string()),
+            ..WriteBody::default()
+        }), facts_golden("wire-path.txt"));
+
+        let skip = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/jev-router/testdata/skip-marker.diff");
+        let gathered = gather(&GatherOpts {
+            diff_file: Some(skip.clone()),
+            write: Some(long),
+            ..GatherOpts::default()
+        });
+        assert_eq!(gathered.proposed, facts_golden("wire-long.txt"));
+        assert_eq!(gathered.diff.text, std::fs::read_to_string(&skip).unwrap());
+        assert_eq!(gathered.diff.source, "file");
+        assert!(gathered.diff.present);
+        assert_eq!(gathered.available, vec!["check".to_string(), "review".to_string()]);
+        assert!(gathered.proposed.len() > "notes/a.md".len());
+
+        let empty = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/jev-router/testdata/empty.diff");
+        let empty_got = gather(&GatherOpts {
+            diff_file: Some(empty),
+            ..GatherOpts::default()
+        });
+        assert!(!empty_got.diff.present);
+        assert!(empty_got.available.is_empty());
+        assert_eq!(empty_got.diff.source, "file");
+
+        let dir = std::env::temp_dir().join(format!("bezel-router-g1-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            let run = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .env("HOME", &dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "jev")
+                .env("GIT_AUTHOR_EMAIL", "jev@example.com")
+                .env("GIT_COMMITTER_NAME", "jev")
+                .env("GIT_COMMITTER_EMAIL", "jev@example.com")
+                .output()
+                .unwrap_or_else(|err| panic!("git {}: {err}", args.join(" ")));
+            assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+        };
+        git(&["init"]);
+        std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+        git(&["-c", "commit.gpgsign=false", "-c", "user.name=jev", "-c", "user.email=jev@example.com", "add", "a.txt"]);
+        git(&["-c", "commit.gpgsign=false", "-c", "user.name=jev", "-c", "user.email=jev@example.com", "commit", "-m", "init"]);
+        std::fs::write(dir.join("a.txt"), "two\n").unwrap();
+        let worktree = gather(&GatherOpts {
+            repo: dir.clone(),
+            ..GatherOpts::default()
+        });
+        let git_text = std::process::Command::new("git")
+            .args(["diff", "--no-color", "--no-ext-diff"])
+            .current_dir(&dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+            .unwrap();
+        assert!(git_text.status.success());
+        assert_eq!(worktree.diff.source, "git-worktree");
+        assert_eq!(worktree.diff.text, String::from_utf8(git_text.stdout).unwrap());
+        assert!(worktree.diff.present);
+        assert!(worktree.diff.text.contains("two"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

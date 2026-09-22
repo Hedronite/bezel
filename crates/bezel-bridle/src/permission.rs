@@ -1,4 +1,4 @@
-use crate::{CONCERN_PARK, WRITE_CODE_DENY_FLAGS};
+use crate::policy::{hook_decision, AUTO_ALLOW, CONCERN_PARK, WRITE_CODE_DENY_FLAGS};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WriteVerdict {
@@ -17,7 +17,7 @@ pub fn write_from_flags(flags: &[String], concern: Option<f64>) -> WriteVerdict 
             gate: "hold",
             reason: (*flag).to_string(),
             code_deny: true,
-            auto_allow: false,
+            auto_allow: AUTO_ALLOW,
         };
     }
     if concern_under_park(concern) {
@@ -26,15 +26,29 @@ pub fn write_from_flags(flags: &[String], concern: Option<f64>) -> WriteVerdict 
             gate: "auto",
             reason: "below_park".to_string(),
             code_deny: false,
-            auto_allow: false,
+            auto_allow: AUTO_ALLOW,
         };
     }
+    let reason = if flags.is_empty() {
+        "empty_findings_not_approval"
+    } else {
+        "writer_parent"
+    };
     WriteVerdict {
         mapped: "writer",
         gate: "hold",
-        reason: "empty_findings_not_approval".to_string(),
+        reason: reason.to_string(),
         code_deny: false,
-        auto_allow: false,
+        auto_allow: AUTO_ALLOW,
+    }
+}
+
+pub fn active_hook(verdict: &WriteVerdict) -> &'static str {
+    let decision = hook_decision(verdict.mapped, verdict.gate);
+    if decision == "allow" {
+        "deny"
+    } else {
+        decision
     }
 }
 

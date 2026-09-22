@@ -1,56 +1,115 @@
 //! Bridle core. The harness stays the harness. This crate decides.
 //!
-//! First slice: code-deny flags, the 0.4 write concern bar, and an empty
-//! check that never approves. No network. No client.
+//! Pure core: `policy`, `check`, `permission`, `loop_stop`. No network. No client.
 
 mod check;
+mod loop_stop;
 mod permission;
+mod policy;
 
-pub use check::{check_envelope, deterministic_flags, parse_unified_diff, CheckReport, Hunk};
-pub use permission::{write_from_flags, WriteVerdict};
-
-pub const AUTO_ALLOW: bool = false;
-pub const CONCERN_PARK: f64 = 0.4;
-pub const LOOP_STOP_MIN_CONFIDENCE: f64 = 0.6;
-pub const LOOP_STOP_MIN_PROBABILITY: f64 = 0.55;
-pub const LOOP_STOP_MIN_MARGIN: f64 = 0.15;
-
-pub const WRITE_CODE_DENY_FLAGS: &[&str] = &[
-    "secret_path",
-    "skip_marker_added",
-    "assertions_removed",
-    "test_file_deleted",
-];
+pub use check::{check_envelope, deterministic_flags, file_kind, parse_unified_diff, write_flags, CheckReport, Hunk};
+pub use loop_stop::{apply_loop_stop_thresholds, LoopStopDecision};
+pub use permission::{active_hook, write_from_flags, WriteVerdict};
+pub use policy::{
+    hook_decision, AUTO_ALLOW, CHECK_POLICY_ID, CONCERN_PARK, LOOP_STOP_MIN_CONFIDENCE, LOOP_STOP_MIN_MARGIN,
+    LOOP_STOP_MIN_PROBABILITY, LOOP_STOP_POLICY_ID, WRITE_CODE_DENY_FLAGS,
+};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use std::process::Command;
 
-    const DELETED_TEST: &str = "\
-diff --git a/src/math.test.js b/src/math.test.js
-deleted file mode 100644
-index 1111111..0000000
---- a/src/math.test.js
-+++ /dev/null
-@@ -1 +0,0 @@
--const value = 1;
-";
+    fn testdata(name: &str) -> String {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/jev-router/testdata")
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()))
+    }
 
-    const DELETED_ASSERTION: &str = "\
-diff --git a/src/math.test.js b/src/math.test.js
-deleted file mode 100644
---- a/src/math.test.js
-+++ /dev/null
-@@ -1 +0,0 @@
--test('adds', () => { expect(1).toBe(1); });
-";
+    fn laws_sentence() -> String {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skills-stub/laws/LAWS.bend");
+        std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()))
+    }
+
+    /// F4 is a git-produced deletion, not a hand-written diff.
+    fn real_deletion_diff() -> String {
+        let dir = std::env::temp_dir().join(format!("bezel-bridle-f4-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).expect("temp src");
+        let git = |args: &[&str]| {
+            let run = Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .env("HOME", &dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "jev")
+                .env("GIT_AUTHOR_EMAIL", "jev@example.com")
+                .env("GIT_COMMITTER_NAME", "jev")
+                .env("GIT_COMMITTER_EMAIL", "jev@example.com")
+                .output()
+                .unwrap_or_else(|err| panic!("git {} failed to spawn: {err}", args.join(" ")));
+            assert!(
+                run.status.success(),
+                "git {}\nstatus={:?}\nstderr={}\nstdout={}",
+                args.join(" "),
+                run.status.code(),
+                String::from_utf8_lossy(&run.stderr),
+                String::from_utf8_lossy(&run.stdout),
+            );
+            run
+        };
+        git(&["init"]);
+        std::fs::write(dir.join("src/math.test.js"), "const value = 1;\n").expect("fixture file");
+        git(&[
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "user.name=jev",
+            "-c",
+            "user.email=jev@example.com",
+            "add",
+            "src/math.test.js",
+        ]);
+        git(&[
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "user.name=jev",
+            "-c",
+            "user.email=jev@example.com",
+            "commit",
+            "-m",
+            "init",
+        ]);
+        git(&["rm", "src/math.test.js"]);
+        let diff = git(&["diff", "--cached", "--no-color", "--no-ext-diff"]);
+        let text = String::from_utf8(diff.stdout).expect("diff utf8");
+        let _ = std::fs::remove_dir_all(&dir);
+        text
+    }
 
     #[test]
-    fn real_deletion_stops_as_test_file_deleted() {
-        let hunks = parse_unified_diff(DELETED_TEST);
+    fn f1_empty_check_does_not_approve() {
+        let diff = testdata("empty.diff");
+        let report = check_envelope(&diff);
+        assert_eq!(report.status, "no_diff");
+        assert!(!report.approval);
+        assert!(report.empty_findings_are_not_approval);
+        let law = laws_sentence();
+        assert!(law.contains("Empty findings are not approval."));
+    }
+
+    #[test]
+    fn f4_real_deletion_stops_as_test_file_deleted() {
+        let diff = real_deletion_diff();
+        assert!(diff.contains("deleted file mode"), "{diff}");
+        assert!(diff.contains("+++ /dev/null"), "{diff}");
+        let hunks = parse_unified_diff(&diff);
         assert_eq!(hunks.len(), 1);
         assert!(hunks[0].header.contains("+++ /dev/null"));
-        assert!(hunks[0].header.contains("@@ -1 +0,0 @@"));
         assert!(hunks[0].text.contains("deleted file mode"));
         assert!(hunks[0].deleted);
         let flags = deterministic_flags(&hunks[0]);
@@ -60,59 +119,93 @@ deleted file mode 100644
         assert_eq!(verdict.reason, "test_file_deleted");
         assert!(verdict.code_deny);
         assert!(!verdict.auto_allow);
+        assert_ne!(verdict.mapped, "continue");
     }
 
     #[test]
-    fn deleted_assertion_names_assertions_removed_first() {
-        let hunks = parse_unified_diff(DELETED_ASSERTION);
-        let flags = deterministic_flags(&hunks[0]);
-        assert!(flags.contains(&"assertions_removed".to_string()));
-        assert!(flags.contains(&"test_file_deleted".to_string()));
-        let verdict = write_from_flags(&flags, Some(0.2));
-        assert_eq!(verdict.reason, "assertions_removed");
-        assert_eq!(verdict.mapped, "stop");
-    }
-
-    #[test]
-    fn concern_under_park_continues_and_absent_does_not() {
+    fn f6_concern_under_0_4_continues_absent_does_not() {
         let go = write_from_flags(&[], Some(0.2));
         assert_eq!(go.mapped, "continue");
         assert_eq!(go.gate, "auto");
         assert_eq!(go.reason, "below_park");
         assert!(!go.auto_allow);
+        assert_eq!(active_hook(&go), "defer");
+        assert_ne!(active_hook(&go), "allow");
+        assert_ne!(hook_decision(go.mapped, go.gate), "allow");
+
         let zero = write_from_flags(&[], Some(0.0));
         assert_eq!(zero.mapped, "continue");
+
         let at_bar = write_from_flags(&[], Some(CONCERN_PARK));
         assert_ne!(at_bar.mapped, "continue");
         assert_eq!(at_bar.reason, "empty_findings_not_approval");
+
         let absent = write_from_flags(&[], None);
         assert_ne!(absent.mapped, "continue");
+        assert_eq!(absent.mapped, "writer");
         assert_eq!(absent.reason, "empty_findings_not_approval");
+
+        let nan = write_from_flags(&[], Some(f64::NAN));
+        assert_ne!(nan.mapped, "continue");
     }
 
     #[test]
-    fn four_deny_flags_stop_by_name() {
-        for flag in WRITE_CODE_DENY_FLAGS {
-            let verdict = write_from_flags(&[flag.to_string()], Some(0.2));
-            assert_eq!(verdict.reason, *flag);
-            assert_eq!(verdict.mapped, "stop");
-            assert!(verdict.code_deny);
-        }
+    fn deny_flag_secret_path_stops_by_name() {
+        let flags = write_flags("", ".env");
+        let verdict = write_from_flags(&flags, Some(0.2));
+        assert_eq!(verdict.reason, "secret_path");
+        assert_eq!(verdict.mapped, "stop");
+        assert!(verdict.code_deny);
+        assert!(!verdict.auto_allow);
     }
 
     #[test]
-    fn empty_check_is_not_approval() {
-        let report = check_envelope("");
-        assert_eq!(report.status, "no_diff");
-        assert!(!report.approval);
-        assert!(report.empty_findings_are_not_approval);
+    fn deny_flag_skip_marker_added_stops_by_name() {
+        let diff = testdata("skip-marker.diff");
+        let flags = write_flags(&diff, "src/math.test.js");
+        assert!(flags.contains(&"skip_marker_added".to_string()));
+        let verdict = write_from_flags(&flags, Some(0.2));
+        assert_eq!(verdict.reason, "skip_marker_added");
+        assert_eq!(verdict.mapped, "stop");
+        assert!(verdict.code_deny);
     }
 
     #[test]
-    fn loop_stop_mins_stay_put() {
+    fn deny_flag_assertions_removed_stops_by_name() {
+        let diff = testdata("assertions-removed.diff");
+        let flags = write_flags(&diff, "src/math.test.js");
+        assert!(flags.contains(&"assertions_removed".to_string()));
+        let verdict = write_from_flags(&flags, Some(0.2));
+        assert_eq!(verdict.reason, "assertions_removed");
+        assert_eq!(verdict.mapped, "stop");
+        assert!(verdict.code_deny);
+    }
+
+    #[test]
+    fn deny_flag_test_file_deleted_stops_by_name() {
+        let flags = vec!["test_file_deleted".to_string()];
+        let verdict = write_from_flags(&flags, Some(0.2));
+        assert_eq!(verdict.reason, "test_file_deleted");
+        assert_eq!(verdict.mapped, "stop");
+        assert!(verdict.code_deny);
+        assert_ne!(verdict.mapped, "continue");
+    }
+
+    #[test]
+    fn loop_stop_subthreshold_does_not_continue() {
         assert_eq!(LOOP_STOP_MIN_CONFIDENCE, 0.6);
         assert_eq!(LOOP_STOP_MIN_PROBABILITY, 0.55);
         assert_eq!(LOOP_STOP_MIN_MARGIN, 0.15);
         assert!(!AUTO_ALLOW);
+        assert_eq!(CHECK_POLICY_ID, "omapi-check-policy@1");
+        assert_eq!(LOOP_STOP_POLICY_ID, "omapi-loop-stop-policy@1");
+        let shaky = apply_loop_stop_thresholds(
+            "continue",
+            0.4,
+            &[("continue", 0.4), ("stop", 0.35), ("escalate", 0.25)],
+        );
+        assert_eq!(shaky.outcome, "cannot_tell");
+        assert_eq!(shaky.reason, "model_uncertain");
+        assert_ne!(shaky.outcome, "continue");
     }
 }

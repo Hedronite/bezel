@@ -108,6 +108,26 @@ fn git_b_path(line: &str) -> Option<String> {
     Some(rest[idx + 3..].to_string())
 }
 
+pub fn file_kind(path: &str) -> &'static str {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    if name == ".env"
+        || name.starts_with(".env.")
+        || name == "id_rsa"
+        || name == "id_ed25519"
+        || name == "credentials"
+        || name == "credentials.json"
+        || name.ends_with(".pem")
+        || name.ends_with(".p12")
+        || name.ends_with(".key")
+    {
+        return "secret";
+    }
+    if is_test_path(path) {
+        return "test";
+    }
+    "source"
+}
+
 pub fn is_test_path(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     lower.ends_with(".test.js")
@@ -130,9 +150,24 @@ fn is_assertion(line: &str) -> bool {
         || body.contains("XCTAssert")
 }
 
+pub fn write_flags(diff: &str, path: &str) -> Vec<String> {
+    let mut flags = Vec::new();
+    if file_kind(path) == "secret" {
+        flags.push("secret_path".to_string());
+    }
+    for hunk in parse_unified_diff(diff) {
+        for flag in deterministic_flags(&hunk) {
+            if !flags.iter().any(|got| got == &flag) {
+                flags.push(flag);
+            }
+        }
+    }
+    flags
+}
+
 pub fn deterministic_flags(hunk: &Hunk) -> Vec<String> {
     let mut flags = Vec::new();
-    if hunk.path.ends_with(".env") || hunk.path.contains("/.env") {
+    if file_kind(&hunk.path) == "secret" {
         flags.push("secret_path".to_string());
     }
     let skip_added = hunk

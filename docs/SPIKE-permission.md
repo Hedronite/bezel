@@ -21,7 +21,7 @@ Depends on the PreToolUse map (`PRETOOL_CLASSES` / [POLICY-MAP.md](POLICY-MAP.md
 | --- | --- | --- |
 | shell | `omapi-loop-stop-policy@1` | One `allow` / `deny` / `ask` Choice on the existing `systemOne` call, only when the command body is present. Thresholds stay on the loop-stop policy. The command body is the content-aware gap. |
 | write | `omapi-check-policy@1` | No new Choice. Deterministic writer flags deny. Empty findings stay ask (writer parent), not allow. |
-| mcp | `omapi-route-workflow-policy@1` | No new Choice. Route-workflow is not permission to call the tool, so the surface stays ask. Typed Calls are PR-C. |
+| mcp | `omapi-route-workflow-policy@1` | No new permission Choice. Route-workflow is not permission to call the tool, so this catalog stays ask. Typed Calls are a separate shadow surface ([SPIKE-calls.md](SPIKE-calls.md)). |
 
 Web and subagent stay on loop-stop with no permission object.
 
@@ -82,6 +82,6 @@ No key + shadow: permission `missingKey`, `blocked: false`, policyId set.
 
 ## Out of scope
 
-MCP typed Calls (PR-C). A tiny follow-up catalog (PR-D). Bend2. A second
-TypeSafe client. Baking `TYPESAFE_API_KEY` into the flake. Defaulting
-`JEV_PERMISSION_MODE` to `active`.
+A tiny follow-up catalog (PR-D). Bend2. A second TypeSafe client. Baking
+`TYPESAFE_API_KEY` into the flake. Defaulting `JEV_PERMISSION_MODE` or
+`JEV_TYPED_CALL_MODE` to `active`.

@@ -68,10 +68,11 @@ export function gateVerdictAllowsExec({ mode, choice, gate, blocked } = {}) {
  * Code denies. Bypass wins over a stop-shaped payload (the wrap skips the router).
  * Non-deny is `defer` — never `allow`.
  *
- * `JEV_MODE` shadow defers unless `permission.honor` is set. That bit is the
- * permission surface (`JEV_PERMISSION_MODE=active` and a key). A permission
- * continue does not override a loop stop. A permission stop/escalate denies
- * even when the loop would exec.
+ * `JEV_MODE` shadow defers unless `permission.honor` or `calls.honor` is set.
+ * Permission honor is `JEV_PERMISSION_MODE=active` and a key. Calls honor is
+ * `JEV_TYPED_CALL_MODE=active` and a key. A continue does not override a loop
+ * stop. A stop/escalate on either honoring surface denies even when the loop
+ * would exec. The decision is still defer or deny, never allow.
  */
 export function pretoolHookDecision(verdict = {}) {
   if (verdict.bypass === true) {
@@ -82,8 +83,10 @@ export function pretoolHookDecision(verdict = {}) {
   const permissionHonors = Boolean(
     permission && permission.honor === true && String(permission.mode || "").toLowerCase() === "active",
   );
+  const calls = verdict.calls && typeof verdict.calls === "object" ? verdict.calls : null;
+  const callsHonors = Boolean(calls && calls.honor === true && String(calls.mode || "").toLowerCase() === "active");
   const modeActive = String(verdict.mode || "shadow").toLowerCase() === "active";
-  if (!modeActive && !permissionHonors) {
+  if (!modeActive && !permissionHonors && !callsHonors) {
     return { action: "defer", exitCode: 0, decision: "defer", reason: "shadow" };
   }
 
@@ -92,15 +95,19 @@ export function pretoolHookDecision(verdict = {}) {
     permissionHonors &&
       (permission.blocked === true || permission.choice === "stop" || permission.choice === "escalate"),
   );
+  const callsBlocks = Boolean(
+    callsHonors && (calls.blocked === true || calls.choice === "stop" || calls.choice === "escalate"),
+  );
 
   let choice = verdict.choice != null ? String(verdict.choice) : "unclassified";
   let gate = verdict.gate != null ? String(verdict.gate) : "hold";
   let blocked = verdict.blocked === true || verdict.blocked === "true";
   let allows = false;
 
-  if (permBlocks) {
-    choice = permission.choice != null ? String(permission.choice) : "stop";
-    gate = permission.gate != null ? String(permission.gate) : "hold";
+  if (permBlocks || callsBlocks) {
+    const blocker = permBlocks ? permission : calls;
+    choice = blocker.choice != null ? String(blocker.choice) : "stop";
+    gate = blocker.gate != null ? String(blocker.gate) : "hold";
     blocked = true;
     allows = false;
   } else if (!loopAllows) {
@@ -117,7 +124,11 @@ export function pretoolHookDecision(verdict = {}) {
   }
 
   const policyId =
-    (verdict.pretool && verdict.pretool.policyId) || (permission && permission.policyId) || "";
+    (verdict.pretool && verdict.pretool.policyId) ||
+    (permBlocks && permission && permission.policyId) ||
+    (callsBlocks && calls && calls.policyId) ||
+    (permission && permission.policyId) ||
+    "";
   const policy = policyId ? ` policy=${policyId}` : "";
   return {
     action: "deny",
@@ -135,7 +146,8 @@ export function pretoolHookDecision(verdict = {}) {
  *
  * Shell / web / subagent stay on loop-stop (the exec gate).
  * Write stays on check (the diff/hunk gate).
- * MCP stays on route-workflow (the capability gate).
+ * MCP stays on route-workflow (the capability gate). Typed Calls rank tools
+ * on that same id; they do not add a policy.
  *
  * MCP names are the qualified `server__tool` form Grok puts on the event
  * (e.g. linear__save_issue), not the `use_tool` dispatcher.

@@ -5,9 +5,21 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  applyCallsVerdict,
+  buildCallQuestions,
+  callsBypass,
+  clampTopX,
+  decideTypedCalls,
+  facetHead,
+  guardEffect,
+  normalizeCatalog,
+  scrubSecrets,
+} from "./calls.mjs";
 import {
   POLICY_IDS,
   buildGateState,
@@ -572,6 +584,21 @@ const cases = [
     assert.match(routerSrc, /shellPermissionQuestion\(choice\)/);
     assert.match(routerSrc, /JEV_PERMISSION_MODE/);
     assert.match(routerSrc, /requestedMode: process\.env\.JEV_PERMISSION_MODE/);
+    assert.match(routerSrc, /JEV_TYPED_CALL_MODE/);
+    assert.match(routerSrc, /buildCallQuestions\(choice, noul/);
+    assert.match(routerSrc, /scrubSecrets\(/);
+    assert.match(routerSrc, /buildGateState\(/);
+    assert.match(routerSrc, /schemaDumpCall\(/);
+    assert.match(routerSrc, /tinyCatalog\(/);
+    const catalogSrc = readFileSync(join(here, "catalog.mjs"), "utf8");
+    assert.equal((catalogSrc.match(/new TypeSafeClient\(/g) || []).length, 0);
+    const callsSrc = readFileSync(join(here, "calls.mjs"), "utf8");
+    assert.equal((callsSrc.match(/new TypeSafeClient\(/g) || []).length, 0);
+    assert.equal((callsSrc.match(/client\.systemOne\(/g) || []).length, 0);
+    assert.doesNotMatch(callsSrc, /process\.env/);
+    assert.doesNotMatch(callsSrc, /jsonrpc/);
+    assert.doesNotMatch(callsSrc, /tools\/call/);
+    assert.match(callsSrc, /tool_call/);
   }),
 
   test("POLICY-MAP.md quotes the matcher and the castle files", () => {
@@ -593,6 +620,10 @@ const cases = [
     assert.match(doc, /allow→continue/);
     assert.match(doc, /Key absent forces this surface to shadow/);
     assert.match(doc, /JEV_MODE=active` does not honor the catalog/);
+    assert.match(doc, /JEV_TYPED_CALL_MODE/);
+    assert.match(doc, /tool_call/);
+    assert.match(doc, /top-X/);
+    assert.match(doc, /Castle Grok hooks leave MCP on ask until this surface is merged/);
   }),
 
   test("JEV_BYPASS=true stamps shell; yes does not bypass; check ignores bypass", () => {
@@ -1219,6 +1250,493 @@ const cases = [
     assert.equal(writePayload.permission.blocked, false);
     assert.equal(writePayload.permission.policyId, "omapi-check-policy@1");
     assert.equal(writePayload.choice, "unclassified");
+  }),
+
+  test("typed calls rank best and top-X on the route-workflow policy", () => {
+    const catalog = normalizeCatalog({
+      interface: "Mcp",
+      tools: [
+        {
+          name: "linear__list_issues",
+          description: "List Linear issues",
+          effect: "read",
+          args: [
+            {
+              name: "team",
+              question: "Which team should the issues come from?",
+              stated: "Does the intent name a team?",
+              optional: true,
+              options: { eng: "Engineering", ops: "Operations" },
+            },
+          ],
+        },
+        {
+          name: "linear__save_issue",
+          description: "Create or update an issue",
+          effect: "write",
+          args: [],
+        },
+        {
+          name: "notes__add",
+          description: "Add a free-text note",
+          effect: "read",
+          args: [{ name: "body", question: "What is the note text?", optional: false }],
+        },
+      ],
+    });
+    assert.equal(catalog.error, null);
+    const readAnswer = {
+      choice: "linear__list_issues",
+      confidence: 0.91,
+      probabilities: {
+        linear__list_issues: 0.8,
+        linear__save_issue: 0.12,
+        notes__add: 0.05,
+        cannot_tell: 0.03,
+      },
+    };
+    const argAnswers = {
+      "linear__list_issues.team?": { noul: 0.92 },
+      "linear__list_issues.team": {
+        choice: "eng",
+        confidence: 0.88,
+        probabilities: { eng: 0.84, ops: 0.16 },
+      },
+    };
+    const picked = decideTypedCalls({
+      catalog,
+      requestedMode: "active",
+      hasKey: true,
+      topX: 2,
+      answer: readAnswer,
+      argAnswers,
+    });
+    assert.equal(picked.transport, "facet");
+    assert.equal(picked.policyId, ROUTING_POLICY.version);
+    assert.equal(picked.honor, true);
+    assert.equal(picked.label, "allow");
+    assert.equal(picked.mapped, "continue");
+    assert.equal(picked.autoAllow, false);
+    assert.equal(picked.autoPromote, false);
+    assert.equal(picked.initiated, false);
+    assert.equal(picked.best.name, "linear__list_issues");
+    assert.equal(picked.best.args.team, "eng");
+    assert.equal(picked.best.initiated, false);
+    assert.equal(picked.best.rank, 1);
+    assert.equal(picked.top.length, 2);
+    assert.equal(picked.top[0].name, "linear__list_issues");
+    assert.equal(picked.top[1].name, "linear__save_issue");
+    assert.equal(picked.facet.op, "tool_call");
+    assert.equal(picked.facet.name, "Mcp.linear__list_issues");
+    assert.equal(picked.facet.guard.decision, "allowed");
+    assert.equal(picked.facet.initiated, false);
+    assert.equal(picked.canonical.tools.length, 2);
+    assert.ok(picked.canonical.tools.every((tool) => tool.effect === "read"));
+    assert.equal(
+      picked.canonical.tools.some((tool) => tool.name === "Mcp.linear__save_issue"),
+      false,
+    );
+    const events = picked.artifact.provenance.events;
+    assert.deepEqual(
+      events.map((event) => event.seq),
+      events.map((_, index) => index + 1),
+    );
+    assert.equal(events.at(-1).op, "tool_call");
+    assert.equal(events.at(-1).decision, "allowed");
+    assert.equal(facetHead(picked.canonical.metadata, events), picked.artifact.provenance.hash_chain.head);
+    assert.equal(JSON.stringify(picked).includes("jsonrpc"), false);
+    assert.equal(JSON.stringify(picked).includes("tools/call"), false);
+
+    const questions = buildCallQuestions(
+      (instructions, criteria) => ({ instructions, criteria }),
+      (instructions) => ({ instructions }),
+      catalog,
+    );
+    assert.equal(questions.call.criteria.cannot_tell.length > 0, true);
+    assert.ok(questions["linear__list_issues.team"]);
+    assert.ok(questions["linear__list_issues.team?"]);
+    assert.equal(questions["notes__add.body"], undefined);
+  }),
+
+  test("typed calls deny side effects and do not promote the next tool", () => {
+    assert.equal(guardEffect("read").allow, true);
+    assert.equal(guardEffect("write").code, "F454");
+    assert.equal(guardEffect("payment").allow, false);
+    assert.equal(guardEffect("filesystem").code, "F454");
+    assert.equal(guardEffect("external").allow, false);
+    assert.equal(guardEffect("network").code, "F454");
+    assert.equal(guardEffect("").code, "F456");
+    assert.equal(guardEffect("not-an-effect").code, "F456");
+    assert.equal(guardEffect("x.acme.audit").allow, false);
+    assert.equal(clampTopX("nope"), 3);
+    assert.equal(clampTopX(0), 1);
+    assert.equal(clampTopX(99), 8);
+
+    const catalog = normalizeCatalog({
+      tools: [
+        { name: "linear__list_issues", description: "List issues", effect: "read", args: [] },
+        { name: "linear__save_issue", description: "Save an issue", effect: "write", args: [] },
+        { name: "linear.save", description: "Bad name", effect: "read", args: [] },
+        { name: "bare__tool", description: "No effect", args: [] },
+      ],
+    });
+    const denied = decideTypedCalls({
+      catalog,
+      requestedMode: "active",
+      hasKey: true,
+      answer: {
+        choice: "linear__save_issue",
+        confidence: 0.93,
+        probabilities: { linear__save_issue: 0.84, linear__list_issues: 0.16 },
+      },
+    });
+    assert.equal(denied.best, null);
+    assert.equal(denied.label, "deny");
+    assert.equal(denied.mapped, "stop");
+    assert.equal(denied.choice, "stop");
+    assert.equal(denied.blocked, true);
+    assert.equal(denied.code, "F454");
+    assert.equal(denied.codeDeny, true);
+    assert.equal(denied.reason, "effect_deny");
+    assert.equal(denied.autoPromote, false);
+    assert.equal(denied.facet.guard.decision, "denied");
+    assert.equal(denied.facet.initiated, false);
+    assert.equal(denied.facet.args && Object.keys(denied.facet.args).length, 0);
+    assert.equal(
+      denied.canonical.tools.some((tool) => String(tool.name).includes("save")),
+      false,
+    );
+
+    const invalid = decideTypedCalls({
+      catalog,
+      requestedMode: "active",
+      hasKey: true,
+      answer: {
+        choice: "linear.save",
+        confidence: 0.9,
+        probabilities: { "linear.save": 0.8, linear__list_issues: 0.2 },
+      },
+    });
+    assert.equal(invalid.code, "F452");
+    assert.equal(invalid.facet, null);
+    assert.equal(invalid.best, null);
+    assert.equal(invalid.label, "deny");
+
+    const missingEffect = decideTypedCalls({
+      catalog,
+      requestedMode: "active",
+      hasKey: true,
+      answer: {
+        choice: "bare__tool",
+        confidence: 0.9,
+        probabilities: { bare__tool: 0.8, linear__list_issues: 0.2 },
+      },
+    });
+    assert.equal(missingEffect.code, "F456");
+    assert.equal(missingEffect.best, null);
+    assert.equal(missingEffect.facet.guard.decision, "denied");
+  }),
+
+  test("typed calls ask instead of allowing when the pick is not a read call", () => {
+    const catalog = normalizeCatalog({
+      tools: [
+        {
+          name: "linear__list_issues",
+          description: "List issues",
+          effect: "read",
+          args: [{ name: "team", question: "Which team?", options: { eng: "Engineering", ops: "Operations" } }],
+        },
+        {
+          name: "notes__add",
+          description: "Add a note",
+          effect: "read",
+          args: [{ name: "body", question: "What should the note say?", optional: false }],
+        },
+      ],
+    });
+    const uncertain = decideTypedCalls({
+      catalog,
+      requestedMode: "active",
+      hasKey: true,
+      answer: {
+        choice: "linear__list_issues",
+        confidence: 0.42,
+        probabilities: { linear__list_issues: 0.4, notes__add: 0.35, cannot_tell: 0.25 },
+      },
+    });
+    assert.equal(uncertain.reason, "model_uncertain");
+    assert.equal(uncertain.label, "ask");
+    assert.equal(uncertain.mapped, "escalate");
+    assert.equal(uncertain.best, null);
+    assert.equal(uncertain.facet, null);
+    assert.equal(uncertain.blocked, true);
+    assert.notEqual(uncertain.label, "allow");
+
+    const abstain = decideTypedCalls({
+      catalog,
+      requestedMode: "shadow",
+      hasKey: true,
+      answer: {
+        choice: "cannot_tell",
+        confidence: 0.9,
+        probabilities: { cannot_tell: 0.9, linear__list_issues: 0.1 },
+      },
+    });
+    assert.equal(abstain.reason, "cannot_tell");
+    assert.equal(abstain.honor, false);
+    assert.equal(abstain.blocked, false);
+    assert.equal(abstain.choice, "unclassified");
+
+    const openArg = decideTypedCalls({
+      catalog,
+      requestedMode: "active",
+      hasKey: true,
+      answer: {
+        choice: "notes__add",
+        confidence: 0.9,
+        probabilities: { notes__add: 0.8, linear__list_issues: 0.2 },
+      },
+    });
+    assert.equal(openArg.reason, "open_arg");
+    assert.equal(openArg.label, "ask");
+    assert.equal(openArg.best, null);
+
+    const unknown = decideTypedCalls({
+      catalog,
+      requestedMode: "active",
+      hasKey: true,
+      answer: {
+        choice: "not_a_tool",
+        confidence: 0.9,
+        probabilities: { not_a_tool: 0.9, linear__list_issues: 0.1 },
+      },
+    });
+    assert.equal(unknown.reason, "unknown_tool");
+    assert.equal(unknown.codeDeny, true);
+    assert.equal(unknown.best, null);
+
+    const noCatalog = decideTypedCalls({ requestedMode: "active", hasKey: true });
+    assert.equal(noCatalog.reason, "no_catalog");
+    assert.equal(noCatalog.label, "ask");
+    assert.equal(noCatalog.blocked, true);
+
+    const unreadable = decideTypedCalls({
+      catalogError: "catalog_unreadable",
+      requestedMode: "active",
+      hasKey: true,
+    });
+    assert.equal(unreadable.reason, "catalog_unreadable");
+    assert.equal(unreadable.label, "ask");
+
+    const bypass = callsBypass();
+    assert.equal(bypass.skipped, true);
+    assert.equal(bypass.reason, "bypass");
+    assert.equal(bypass.honor, false);
+    assert.equal(bypass.policyId, ROUTING_POLICY.version);
+  }),
+
+  test("missing key forces typed calls to shadow and scrubs secrets", () => {
+    const secret = "supersecretvalue";
+    const scrubbed = scrubSecrets(
+      {
+        TYPESAFE_API_KEY: secret,
+        api_key: secret,
+        tools: [{ name: "linear__list_issues", description: `List ${secret} issues`, effect: "read" }],
+      },
+      [secret],
+    );
+    assert.equal(scrubbed.TYPESAFE_API_KEY, undefined);
+    assert.equal(scrubbed.api_key, undefined);
+    assert.equal(scrubbed.tools[0].description.includes(secret), false);
+    const catalog = normalizeCatalog(scrubbed);
+    assert.equal(catalog.tools.length, 1);
+
+    const forced = decideTypedCalls({
+      catalog,
+      requestedMode: "active",
+      hasKey: false,
+      answer: {
+        choice: "linear__list_issues",
+        confidence: 0.99,
+        probabilities: { linear__list_issues: 0.99 },
+      },
+    });
+    assert.equal(forced.mode, "shadow");
+    assert.equal(forced.honor, false);
+    assert.equal(forced.missingKey, true);
+    assert.equal(forced.blocked, false);
+    assert.equal(forced.best, null);
+    assert.equal(forced.initiated, false);
+    assert.equal(forced.label, "ask");
+    assert.notEqual(forced.mapped, "continue");
+    assert.equal(JSON.stringify(forced).includes(secret), false);
+
+    const shadowAllow = decideTypedCalls({
+      catalog,
+      requestedMode: "yes",
+      hasKey: true,
+      answer: {
+        choice: "linear__list_issues",
+        confidence: 0.9,
+        probabilities: { linear__list_issues: 0.8, cannot_tell: 0.2 },
+      },
+    });
+    assert.equal(shadowAllow.mode, "shadow");
+    assert.equal(shadowAllow.label, "allow");
+    assert.equal(shadowAllow.honor, false);
+    assert.equal(shadowAllow.blocked, false);
+    const logged = pretoolHookDecision({
+      mode: "shadow",
+      choice: "continue",
+      gate: "auto",
+      blocked: false,
+      calls: shadowAllow,
+    });
+    assert.equal(logged.decision, "defer");
+    assert.equal(logged.reason, "shadow");
+    assert.notEqual(logged.decision, "allow");
+  }),
+
+  test("a honoring typed call does not auto-allow over a stop", () => {
+    const catalog = normalizeCatalog({
+      tools: [
+        { name: "linear__list_issues", description: "List issues", effect: "read", args: [] },
+        { name: "linear__save_issue", description: "Save an issue", effect: "write", args: [] },
+      ],
+    });
+    const allowed = decideTypedCalls({
+      catalog,
+      requestedMode: "active",
+      hasKey: true,
+      answer: {
+        choice: "linear__list_issues",
+        confidence: 0.9,
+        probabilities: { linear__list_issues: 0.8, linear__save_issue: 0.2 },
+      },
+    });
+    const kept = applyCallsVerdict(
+      { choice: "stop", gate: "hold", blocked: true, exec: false, mode: "active" },
+      allowed,
+    );
+    assert.equal(kept.choice, "stop");
+    assert.equal(kept.blocked, true);
+    assert.equal(kept.calls.mapped, "continue");
+    assert.equal(kept.calls.autoAllow, false);
+    const hook = pretoolHookDecision({
+      ...kept,
+      mode: "shadow",
+      pretool: { policyId: "omapi-loop-stop-policy@1" },
+    });
+    assert.equal(hook.decision, "deny");
+    assert.match(hook.reason, /choice=stop/);
+    assert.notEqual(hook.decision, "allow");
+
+    const deferred = pretoolHookDecision(
+      applyCallsVerdict(
+        { mode: "shadow", choice: "continue", gate: "auto", blocked: false, exec: true },
+        allowed,
+      ),
+    );
+    assert.equal(deferred.decision, "defer");
+    assert.equal(deferred.reason, "exec");
+    assert.notEqual(deferred.decision, "allow");
+
+    const denied = decideTypedCalls({
+      catalog,
+      requestedMode: "active",
+      hasKey: true,
+      answer: {
+        choice: "linear__save_issue",
+        confidence: 0.9,
+        probabilities: { linear__save_issue: 0.85, linear__list_issues: 0.15 },
+      },
+    });
+    const stopped = applyCallsVerdict(
+      { mode: "shadow", choice: "continue", gate: "auto", blocked: false, exec: true },
+      denied,
+    );
+    assert.equal(stopped.choice, "stop");
+    assert.equal(stopped.blocked, true);
+    assert.equal(stopped.exec, false);
+    const deniedHook = pretoolHookDecision(stopped);
+    assert.equal(deniedHook.decision, "deny");
+    assert.match(deniedHook.reason, /policy=omapi-route-workflow-policy@1/);
+    assert.notEqual(deniedHook.decision, "allow");
+
+    const adopted = decidePermission({
+      classId: "mcp",
+      requestedMode: "active",
+      hasKey: true,
+      routingOutcome: "check",
+      typed: allowed,
+    });
+    assert.equal(adopted.policyId, ROUTING_POLICY.version);
+    assert.equal(adopted.mapped, "continue");
+    assert.equal(adopted.label, "allow");
+    assert.equal(adopted.autoAllow, false);
+    const stillAsk = decidePermission({
+      classId: "mcp",
+      requestedMode: "active",
+      hasKey: true,
+      routingOutcome: "check",
+      typed: { ...allowed, honor: false, mode: "shadow" },
+    });
+    assert.equal(stillAsk.reason, "workflow_is_not_permission");
+    assert.equal(stillAsk.label, "ask");
+  }),
+
+  test("typed call CLI stays shadow without a key and does not print a secret", () => {
+    const dir = mkdtempSync(join(tmpdir(), "jev-calls-"));
+    const file = join(dir, "tools.json");
+    const secret = "supersecretvalue";
+    writeFileSync(
+      file,
+      JSON.stringify({
+        interface: "Mcp",
+        TYPESAFE_API_KEY: secret,
+        tools: [{ name: "linear__list_issues", description: "List issues", effect: "read", args: [] }],
+      }),
+    );
+    const argv = ["--calls", "--tools-file", file, "--tool-name", "linear__list_issues", "--top", "2", "list the issues"];
+    const env = {
+      ...process.env,
+      JEV_MODE: "shadow",
+      JEV_TYPED_CALL_MODE: "active",
+      JEV_PERMISSION_MODE: "active",
+      JEV_BYPASS: "",
+      TYPESAFE_API_KEY: "",
+    };
+    const bin = process.env.JEV_ROUTER_BIN;
+    const run = bin
+      ? spawnSync(bin, argv, { env, encoding: "utf8" })
+      : spawnSync(process.execPath, [join(here, "jev-router.mjs"), ...argv], { env, encoding: "utf8" });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stdout.includes(secret), false, run.stdout);
+    assert.equal(run.stderr.includes(secret), false, run.stderr);
+    const payload = JSON.parse(run.stdout.trim().split("\n").at(-1));
+    assert.equal(payload.blocked, false);
+    assert.equal(payload.pretool.class, "mcp");
+    assert.equal(payload.pretool.policyId, payload.calls.policyId);
+    assert.equal(payload.calls.transport, "facet");
+    assert.equal(payload.calls.mode, "shadow");
+    assert.equal(payload.calls.honor, false);
+    assert.equal(payload.calls.missingKey, true);
+    assert.equal(payload.calls.blocked, false);
+    assert.equal(payload.calls.initiated, false);
+    assert.equal(payload.calls.autoAllow, false);
+    assert.equal(payload.calls.best, null);
+    assert.equal(payload.calls.reason, "missing_key");
+    assert.equal(payload.calls.policyId, "omapi-route-workflow-policy@1");
+    assert.equal(payload.calls.canonical.tools.length, 1);
+    assert.ok(payload.calls.artifact.provenance.events.every((event) => event.op === "tool_expose"));
+    assert.equal(payload.permission.missingKey, true);
+    assert.equal(payload.permission.honor, false);
+    assert.equal(payload.permission.blocked, false);
+    assert.equal(payload.permission.policyId, "omapi-route-workflow-policy@1");
+    const hookLine = run.stdout.trim().split("\n").at(-1);
+    assert.equal(hookLine.includes("jsonrpc"), false);
+    assert.equal(hookLine.includes("tools/call"), false);
   }),
 ];
 

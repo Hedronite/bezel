@@ -2063,8 +2063,109 @@ process.stdout.write('{"ok":true,"mode":"shadow","choice":"continue","gate":"aut
       routingOutcome: "check",
       typed: { ...allowed, honor: false, mode: "shadow" },
     });
-    assert.equal(stillAsk.reason, "workflow_is_not_permission");
+    assert.notEqual(stillAsk.reason, "workflow_is_not_permission");
     assert.equal(stillAsk.label, "ask");
+    assert.notEqual(stillAsk.mapped, "continue");
+  }),
+
+  test("mcp read follows loop-stop when typed-call mode is unset", () => {
+    const confident = {
+      label: "allow",
+      confidence: 0.9,
+      probabilities: { allow: 0.8, deny: 0.1, ask: 0.1 },
+    };
+    const shell = decidePermission({
+      classId: "shell",
+      requestedMode: "active",
+      hasKey: true,
+      contentPresent: true,
+      ...confident,
+    });
+    const read = decidePermission({
+      classId: "mcp",
+      requestedMode: "active",
+      hasKey: true,
+      toolName: "linear__list_issues",
+      effect: "read",
+      ...confident,
+    });
+    assert.equal(read.mapped, shell.mapped);
+    assert.equal(read.choice, shell.choice);
+    assert.equal(read.gate, shell.gate);
+    assert.equal(read.label, shell.label);
+    assert.equal(read.reason, shell.reason);
+    assert.equal(read.choice, "continue");
+    assert.equal(read.gate, "auto");
+    assert.equal(read.autoAllow, false);
+    assert.equal(read.policyId, ROUTING_POLICY.version);
+    assert.notEqual(read.reason, "workflow_is_not_permission");
+    const hook = decideHook({
+      event: { toolName: "linear__list_issues" },
+      env: { JEV_PERMISSION_MODE: "active", TYPESAFE_API_KEY: "present-key" },
+      verdict: applyPermissionVerdict(
+        {
+          mode: "active",
+          choice: "continue",
+          gate: "auto",
+          blocked: false,
+          exec: true,
+          pretool: pretoolStamp({ toolName: "linear__list_issues" }),
+        },
+        read,
+      ),
+    });
+    assert.equal(hook.decision, "defer");
+    assert.notEqual(hook.decision, "allow");
+
+    const search = decidePermission({
+      classId: "mcp",
+      requestedMode: "active",
+      hasKey: true,
+      toolName: "lapis__search",
+      typed: { honor: false, reason: "no_catalog", label: "ask", mapped: "escalate" },
+      ...confident,
+    });
+    assert.equal(search.choice, "continue");
+    assert.equal(search.gate, "auto");
+    assert.equal(search.mapped, "continue");
+    assert.equal(search.autoAllow, false);
+    assert.notEqual(search.reason, "workflow_is_not_permission");
+    assert.notEqual(search.reason, "no_catalog");
+
+    const bare = decidePermission({
+      classId: "mcp",
+      requestedMode: "active",
+      hasKey: true,
+      toolName: "lapis__search",
+    });
+    assert.notEqual(bare.reason, "workflow_is_not_permission");
+    assert.notEqual(bare.mapped, "continue");
+    assert.equal(bare.label, "ask");
+
+    const mutate = decidePermission({
+      classId: "mcp",
+      requestedMode: "active",
+      hasKey: true,
+      toolName: "linear__save_issue",
+      effect: "write",
+      ...confident,
+    });
+    assert.equal(mutate.label, "ask");
+    assert.equal(mutate.mapped, "escalate");
+    assert.equal(mutate.choice, "escalate");
+    assert.equal(mutate.reason, "mutating_mcp");
+    assert.equal(mutate.autoAllow, false);
+    assert.notEqual(mutate.choice, "continue");
+
+    const namedMutate = decidePermission({
+      classId: "mcp",
+      requestedMode: "active",
+      hasKey: true,
+      toolName: "notes__add",
+      ...confident,
+    });
+    assert.equal(namedMutate.label, "ask");
+    assert.notEqual(namedMutate.mapped, "continue");
   }),
 
   test("typed call CLI stays shadow without a key and does not print a secret", () => {

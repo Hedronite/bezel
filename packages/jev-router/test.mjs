@@ -31,6 +31,7 @@ import {
 } from "./catalog.mjs";
 import { deterministicFlags, parseUnifiedDiff, runCheck } from "./check.mjs";
 import { decideHook, harnessConfig, harnessModes, parseHookEvent, runSmoke } from "./harness.mjs";
+import { permissionFromHook } from "./jev-router.mjs";
 import {
   availableCapabilities,
   clipToMaxHunkChars,
@@ -348,8 +349,10 @@ exec ${shQuote(process.execPath)} ${shQuote(script)} "$@"
 
   test("check stays on git-worktree gatherDiff and empty findings are not approval", async () => {
     const src = readFileSync(join(here, "jev-router.mjs"), "utf8");
-    const permissionSrc = src.slice(src.indexOf("function permissionDecision"), src.indexOf("function withPermission"));
+    const permissionSrc = src.slice(src.indexOf("export function permissionFromHook"), src.indexOf("function withPermission"));
     assert.match(permissionSrc, /parseWriteToolWire/);
+    assert.match(permissionSrc, /toolName: args\.toolName/);
+    assert.match(permissionSrc, /effect: effectFromHook/);
     assert.doesNotMatch(permissionSrc, /gatherDiff/);
     const checkSrc = src.slice(src.indexOf("async function runCheckWorkflow"), src.indexOf("async function shadowWorkflowChoice"));
     assert.match(checkSrc, /gatherDiff\(evidenceOpts\(args\)\)/);
@@ -2263,6 +2266,39 @@ exec ${shQuote(process.execPath)} ${shQuote(script)} "$@"
     });
     assert.equal(namedMutate.label, "ask");
     assert.notEqual(namedMutate.mapped, "continue");
+  }),
+
+  test("hook forwards lapis__search into permission instead of the workflow outcome", () => {
+    const bars = {
+      requestedMode: "active",
+      hasKey: true,
+      label: "allow",
+      confidence: 0.9,
+      probabilities: { allow: 0.8, deny: 0.1, ask: 0.1 },
+      routingOutcome: "check",
+    };
+    const kept = permissionFromHook({ toolName: "lapis__search", effect: "read" }, bars);
+    assert.equal(kept.mapped, "continue");
+    assert.equal(kept.choice, "continue");
+    assert.equal(kept.reason, "selected");
+    assert.equal(kept.autoAllow, false);
+    assert.notEqual(kept.reason, "workflow_is_not_permission");
+    const namedOnly = permissionFromHook({ toolName: "lapis__search" }, bars);
+    assert.equal(namedOnly.mapped, "continue");
+    assert.equal(namedOnly.reason, "selected");
+    const dropped = permissionFromHook({ toolClass: "mcp" }, bars);
+    assert.equal(dropped.reason, "workflow_is_not_permission");
+    assert.notEqual(dropped.mapped, "continue");
+    assert.notEqual(dropped.choice, "continue");
+    const hook = pretoolHookDecision({
+      mode: "active",
+      choice: "continue",
+      gate: "auto",
+      blocked: false,
+      permission: kept,
+    });
+    assert.equal(hook.decision, "defer");
+    assert.notEqual(hook.decision, "allow");
   }),
 
   test("typed call CLI stays shadow without a key and does not print a secret", () => {

@@ -48,7 +48,8 @@
  * after the available-gate (diff present?). Log only — never blocks.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { choice, noul, TypeSafeClient } from "@typesafe-ai/sdk";
 import {
   applyCallsVerdict,
@@ -299,20 +300,71 @@ function buildCalls(extra = {}) {
   });
 }
 
-function permissionDecision(extra = {}) {
-  const classId = matchedClassId();
+function effectFromHook(toolName, toolInput) {
+  if (toolInput && typeof toolInput === "object" && !Array.isArray(toolInput) && typeof toolInput.effect === "string") {
+    return toolInput.effect;
+  }
+  if (typeof toolInput === "string" && toolInput.trim().startsWith("{")) {
+    try {
+      const parsed = JSON.parse(toolInput);
+      if (parsed && typeof parsed.effect === "string") return parsed.effect;
+    } catch {
+      // Shell text is not a tool record.
+    }
+  }
+  const tools = loadedCatalog && loadedCatalog.catalog && Array.isArray(loadedCatalog.catalog.tools)
+    ? loadedCatalog.catalog.tools
+    : [];
+  const row = tools.find((tool) => tool && tool.name === toolName);
+  return row && typeof row.effect === "string" ? row.effect : "";
+}
+
+/**
+ * Hook record → decidePermission. toolName and effect come from the hook,
+ * not from the extra judge fields. Dropping toolName leaves a read-shaped
+ * MCP name on the workflow outcome.
+ */
+export function permissionFromHook(hook = {}, extra = {}) {
+  const toolName = hook && hook.toolName ? String(hook.toolName) : "";
+  const effect = hook && hook.effect ? String(hook.effect) : "";
+  const toolInput = hook && hook.toolInput !== undefined ? hook.toolInput : "";
+  const stamp = pretoolStamp({ toolName, toolClass: hook && hook.toolClass ? hook.toolClass : "" });
+  const classId = stamp && stamp.matched ? stamp.class : null;
   if (!permissionSurface(classId)) return null;
-  // Write evidence is the clipped proposed edit, not the git worktree.
-  const write = classId === "write" ? parseWriteToolWire(args.toolInput) : { diffText: "", path: "" };
+  const write = classId === "write" ? parseWriteToolWire(toolInput) : { diffText: "", path: "" };
   return decidePermission({
     classId,
     requestedMode: process.env.JEV_PERMISSION_MODE,
     hasKey,
-    contentPresent: classId === "shell" && toolInputPresent(args.toolInput),
+    contentPresent: classId === "shell" && toolInputPresent(toolInput),
     diffText: write.diffText,
     path: write.path,
     ...extra,
+    toolName,
+    effect,
   });
+}
+
+function permissionDecision(extra = {}) {
+  return permissionFromHook(
+    {
+      toolName: args.toolName,
+      effect: effectFromHook(args.toolName, args.toolInput),
+      toolInput: args.toolInput,
+      toolClass: args.toolClass,
+    },
+    extra,
+  );
+}
+
+function runningAsCli() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
 }
 
 function withPermission(payload, extra = {}) {
@@ -539,7 +591,7 @@ if (args.check) {
   }
 }
 
-if (!hasKey) {
+if (runningAsCli() && !hasKey) {
   if (mode === "shadow") {
     log("TYPESAFE_API_KEY unset — shadow continues unclassified (does not block)");
     const loop = missingKeyLoop(mode, intent, stepDigest);
@@ -591,6 +643,7 @@ if (!hasKey) {
   });
 }
 
+if (runningAsCli() && hasKey) {
 const client = new TypeSafeClient();
 const classId = matchedClassId();
 const askShellPermission = classId === "shell" && toolInputPresent(args.toolInput);
@@ -765,4 +818,5 @@ try {
     },
     { failed: true },
   );
+}
 }

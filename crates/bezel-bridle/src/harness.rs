@@ -119,6 +119,13 @@ pub fn decide_hook(event: &HookEvent, modes: &Modes, verdict: Option<&GateVerdic
     decision
 }
 
+/// Same entry `bezel-bridle hook` uses. Stdin JSON in, one JSON line out, exit 2 on deny.
+pub fn hook_command(stdin: &str, env: &[(&str, &str)]) -> (i32, String) {
+    let modes = modes_from_env(env);
+    let decision = hook_on_text(stdin, &modes, None);
+    (decision.exit_code, hook_stdout(&decision))
+}
+
 pub fn hook_on_text(text: &str, modes: &Modes, verdict: Option<&GateVerdict>) -> HookOut {
     let event = parse_hook_event(text).unwrap_or(HookEvent {
         tool_name: String::new(),

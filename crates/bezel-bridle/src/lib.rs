@@ -19,7 +19,9 @@ pub use check::{
     write_flags, CheckReport, Hunk, OfflineCheck,
 };
 pub use cli::{fixture_client, run as cli_run, LIVE_COMMAND, LIVE_ON};
-pub use harness::{decide_hook, hook_on_text, hook_stdout, modes_from_env, parse_hook_event, HookEvent, Modes};
+pub use harness::{
+    decide_hook, hook_command, hook_on_text, hook_stdout, modes_from_env, parse_hook_event, HookEvent, Modes,
+};
 pub use loop_stop::{apply_loop_stop_thresholds, LoopStopDecision};
 pub use permission::{active_hook, write_from_flags, WriteVerdict};
 pub use policy::{
@@ -394,6 +396,7 @@ mod tests {
         assert_eq!(code, 0);
         assert!(bash.contains("\"call\":\"schema-dump\""));
         assert!(bash.contains("\"decision\":\"defer\""));
+        assert!(bash.contains("\"title\":\"Bash\""));
         assert!(bash.contains("\"autoAllow\":false"));
         assert!(bash.contains("\"class\":\"shell\""));
         assert!(bash.contains("\"policyId\":\"omapi-loop-stop-policy@1\""));
@@ -448,9 +451,31 @@ mod tests {
         assert!(skip.contains("\"approval\":false"));
         assert!(skip.contains("\"emptyFindingsAreNotApproval\":true"));
         assert!(skip.contains("\"flag\":\"skip_marker_added\""));
+        assert!(skip.contains("\"id\":\"h1\""));
+        assert!(skip.contains("\"source\":\"deterministic\""));
+        assert!(skip.contains("\"severity\":\"warn\""));
+        assert!(skip.contains("\"path\":\"src/math.test.js\""));
+        assert!(skip.contains("\"mode\":\"shadow\""));
+        assert!(skip.contains("\"kind\":\"tiny\""));
+        assert!(skip.contains("\"hunkCount\":1"));
+        assert!(skip.contains("\"parked\":[]"));
+        assert!(skip.contains("TYPESAFE_API_KEY unset — unjudged (shadow continues)"));
         assert!(skip.contains("\"workflow\":\"check\""));
         assert!(!skip.contains("\"decision\":\"allow\""));
         assert!(!skip.contains("\"approval\":true"));
+    }
+
+    #[test]
+    fn hook_command_reads_stdin_and_exits_2_on_deny() {
+        let raw = testdata("grok-pretool-bash.json");
+        let (defer_code, deferred) = hook_command(&raw, &[("JEV_MODE", "shadow")]);
+        assert_eq!(defer_code, 0);
+        assert!(deferred.contains("\"decision\":\"defer\""));
+        assert!(!deferred.contains("\"decision\":\"allow\""));
+        let (deny_code, denied) = hook_command(&raw, &[("JEV_MODE", "active")]);
+        assert_eq!(deny_code, 2);
+        assert!(denied.contains("\"decision\":\"deny\""));
+        assert!(denied.ends_with('\n'));
     }
 
     #[test]

@@ -8,6 +8,7 @@ mod check;
 mod cli;
 mod facts;
 mod harness;
+mod judge;
 mod loop_stop;
 mod permission;
 mod policy;
@@ -21,6 +22,7 @@ pub use check::{
 };
 pub use cli::{fixture_client, run as cli_run, LIVE_COMMAND, LIVE_ON};
 pub use facts::{clip_to_max_hunk_chars, gather, gather_diff, write_tool_wire, Edit, GatherOpts, WriteBody};
+pub use judge::{matches_recorded, recorded_answer, CHECK_JUDGE, MAIN_GATE, SHADOW_WORKFLOW};
 pub use harness::{
     decide_hook, hook_command, hook_on_text, hook_stdout, modes_from_env, parse_hook_event, HookEvent, Modes,
 };
@@ -522,10 +524,10 @@ mod tests {
             let recorded = std::fs::read(&path).expect(name);
             let replayed = client.system_one(name).expect(name);
             assert_eq!(replayed, recorded, "{name}");
-            assert_eq!(replayed.last().copied(), Some(b'\n'));
+            assert!(matches_recorded(&replayed, &recorded));
             let mut paraphrased = recorded.clone();
             paraphrased.pop();
-            assert_ne!(replayed, paraphrased, "{name}");
+            assert!(!matches_recorded(&paraphrased, &recorded), "{name}");
         }
         assert!(client.system_one("missing.json").is_err());
 
@@ -553,6 +555,33 @@ mod tests {
                 assert!(!text.contains(&live), "{name}");
             }
         }
+    }
+
+    #[test]
+    fn g2_three_system_one_sites_byte_match_the_node_answer() {
+        assert!(!LIVE_ON);
+        let client = fixture_client();
+        let sites = [
+            (CHECK_JUDGE, "check-judge.json"),
+            (SHADOW_WORKFLOW, "shadow-workflow.json"),
+            (MAIN_GATE, "main-gate.json"),
+        ];
+        for (site, name) in sites {
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../packages/jev-router/testdata/system-one")
+                .join(name);
+            let recorded = std::fs::read(&path).expect(site);
+            let replayed = recorded_answer(&client, site).expect(site);
+            assert!(matches_recorded(&replayed, &recorded), "{site}");
+            let text = String::from_utf8(recorded.clone()).expect(site);
+            assert!(text.contains("\"model\":\"jev-latest\""), "{site}");
+            assert!(text.contains("\"type\":"), "{site}");
+            let paraphrase = text.replace("\"type\":\"choice\"", "\"kind\":\"choice\"");
+            assert!(!matches_recorded(paraphrase.as_bytes(), &recorded), "{site}");
+        }
+        let call = tool_call();
+        assert_eq!(call.transport, "facet");
+        assert!(!call.initiated);
     }
 
     fn facts_golden(name: &str) -> String {

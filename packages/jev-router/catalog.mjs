@@ -121,7 +121,7 @@ const SCHEMAS = {
     properties: {
       server: { type: "string", description: "MCP server id from the qualified tool name." },
       tool: { type: "string", description: "Tool name on that server." },
-      arguments: { type: "object", description: "Tool arguments. Typed calls are a later change." },
+      arguments: { type: "object", description: "Tool arguments. This dump does not fill them or allow the call." },
     },
   },
 };

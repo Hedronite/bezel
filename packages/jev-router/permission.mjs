@@ -8,8 +8,10 @@
  * (write ask stays on the writer parent instead of a new policy).
  *
  * A new Choice catalog exists only for shell: the command body is not a
- * loop-stop label. Write wraps the check writer. MCP wraps route-workflow;
- * typed Calls are PR-C, not a catalog here.
+ * loop-stop label. Write wraps the check writer. MCP wraps route-workflow.
+ * Typed Calls (calls.mjs) are that same policy id, not a new one. A workflow
+ * pick is still not permission. MCP stays ask until a honoring typed call
+ * selects a read tool (JEV_TYPED_CALL_MODE=active).
  *
  * JEV_PERMISSION_MODE defaults to shadow. `active` honors this surface only
  * after Marci re-COMPAT, and only when TYPESAFE_API_KEY is set.
@@ -64,7 +66,7 @@ export const PERMISSION_SURFACES = [
     parent: "route-workflow",
     catalog: "route-workflow",
     newCatalog: false,
-    contentGap: "typed MCP calls are PR-C",
+    contentGap: "workflow pick is not a tool call; typed calls stay ask until honored",
   },
 ];
 
@@ -270,7 +272,17 @@ function writeFromFlags(surface, mode, { flags, modelLabel }) {
   });
 }
 
-function mcpFromRoute(surface, mode, { routingOutcome }) {
+function mcpFromRoute(surface, mode, { routingOutcome, typed }) {
+  if (typed && typed.honor === true && typed.policyId === surface.policyId && typed.transport === "facet") {
+    const mapped = typed.mapped === "continue" || typed.mapped === "stop" ? typed.mapped : "escalate";
+    const label = mapped === "continue" ? "allow" : mapped === "stop" ? "deny" : "ask";
+    return pack(surface, mode, {
+      mapped,
+      label,
+      reason: typed.reason || "typed_call",
+      codeDeny: typed.codeDeny === true,
+    });
+  }
   const outcome = routingOutcome ? String(routingOutcome) : "";
   const named = outcome && outcome !== "cannot_tell";
   return pack(surface, mode, {
@@ -298,6 +310,7 @@ export function decidePermission({
   path = "",
   flags = null,
   routingOutcome = null,
+  typed = null,
   failed = false,
 } = {}) {
   const surface = permissionSurface(classId);
@@ -345,7 +358,7 @@ export function decidePermission({
   if (surface.id === "write") {
     return writeFromFlags(surface, mode, { flags: writeFlags, modelLabel: label });
   }
-  return mcpFromRoute(surface, mode, { routingOutcome });
+  return mcpFromRoute(surface, mode, { routingOutcome, typed });
 }
 
 export function permissionBypass(classId) {

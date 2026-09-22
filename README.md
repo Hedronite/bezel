@@ -147,9 +147,9 @@ jev-router --catalog
 cursor-agent-jev --schema Bash
 ```
 
-`--schema` dumps one tool's schema and does not exec `cursor-agent`. A known tool is `decision: defer` (`autoAllow: false`). An unmapped name denies (exit 2). Neither path prints `{"decision":"allow"}`. How to run: [docs/SPIKE-catalog.md](docs/SPIKE-catalog.md). This index does not set `JEV_PERMISSION_MODE`.
+`--schema` dumps one tool's schema and does not exec `cursor-agent`. A known tool is `decision: defer` (`autoAllow: false`). An unmapped name denies (exit 2). Neither path prints `{"decision":"allow"}`. A schema dump is not a typed call. How to run: [docs/SPIKE-catalog.md](docs/SPIKE-catalog.md). This index does not set `JEV_PERMISSION_MODE`.
 
-
+MCP tool intent can also be ranked into a typed call (best and top-X) on that same route-workflow id. The call leaves the router as a FACET `tool_call`. The router does not invoke the tool. This surface defaults to shadow. `JEV_TYPED_CALL_MODE=active` is the flip, and it is not set in the flake. Until that export, MCP stays ask. How to run: [docs/SPIKE-calls.md](docs/SPIKE-calls.md).
 
 ## Skills
 

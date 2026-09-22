@@ -49,8 +49,9 @@ do not call Jev.
 | `--schema` with no name | exit 2 |
 
 `decision` is `defer` or `deny`. It is never `allow`. An MCP dump sets
-`typedCall: false` and uses `omapi-route-workflow-policy@1`. Typed MCP calls
-are not this spike.
+`typedCall: false` and uses `omapi-route-workflow-policy@1`. A schema dump is
+not a typed call. Ranking an intent into a FACET `tool_call` is
+[SPIKE-calls.md](SPIKE-calls.md), and that surface stays shadow.
 
 ## Tests without live Jev
 

@@ -2,7 +2,7 @@
 //! Active missing-key is escalate / hold on the loop-stop policy, not `jev uncertain`.
 
 use crate::catalog::tiny_catalog_json;
-use crate::facts::{gather_diff, GatherOpts};
+use crate::facts::{gather, GatherOpts};
 use crate::policy::LOOP_STOP_POLICY_ID;
 use std::path::Path;
 
@@ -19,16 +19,25 @@ pub fn bash_no_key(mode: &str, repo: &Path) -> String {
             policy = LOOP_STOP_POLICY_ID,
         )
     } else {
-        let diff = gather_diff(&GatherOpts {
+        let gathered = gather(&GatherOpts {
             repo: repo.to_path_buf(),
             ..GatherOpts::default()
         });
-        let present = if diff.present { "true" } else { "false" };
-        let check = if diff.present { "true" } else { "false" };
+        let present = if gathered.diff.present { "true" } else { "false" };
+        let check = if gathered.diff.present { "true" } else { "false" };
+        let available = format!(
+            "[{}]",
+            gathered
+                .available
+                .iter()
+                .map(|id| format!("\"{id}\""))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
         format!(
-            r#"{{"ok":true,"mode":"shadow","bypass":false,"missingKey":true,"choice":"unclassified","gate":"auto","blocked":false,"exec":true,"hitl":false,"autoRetry":false,"autoPromote":false,"intent":"Bash","stepDigest":"","loop":{{"policy":"{policy}","selected":"unclassified","outcome":"cannot_tell","reason":"missing_key","hitl":false,"autoRetry":false,"autoPromote":false,"shadow":true,"blocked":false}},"workflow":{{"choice":"unclassified","outcome":"cannot_tell","reason":"missing_key","shadow":true,"blocked":false}},"facts":{{"diffPresent":{present},"diffSource":"{source}","available":[],"capabilities":{{"check":{check},"review":{check}}}}},"routingPolicy":"omapi-route-workflow-policy@1","loopStopPolicy":"{policy}","permission":{PERMISSION},"pretool":{PRETOOL},"catalog":{catalog}}}"#,
+            r#"{{"ok":true,"mode":"shadow","bypass":false,"missingKey":true,"choice":"unclassified","gate":"auto","blocked":false,"exec":true,"hitl":false,"autoRetry":false,"autoPromote":false,"intent":"Bash","stepDigest":"","loop":{{"policy":"{policy}","selected":"unclassified","outcome":"cannot_tell","reason":"missing_key","hitl":false,"autoRetry":false,"autoPromote":false,"shadow":true,"blocked":false}},"workflow":{{"choice":"unclassified","outcome":"cannot_tell","reason":"missing_key","shadow":true,"blocked":false}},"facts":{{"diffPresent":{present},"diffSource":"{source}","available":{available},"capabilities":{{"check":{check},"review":{check}}}}},"routingPolicy":"omapi-route-workflow-policy@1","loopStopPolicy":"{policy}","permission":{PERMISSION},"pretool":{PRETOOL},"catalog":{catalog}}}"#,
             policy = LOOP_STOP_POLICY_ID,
-            source = diff.source,
+            source = gathered.diff.source,
         )
     };
     format!("{body}\n")

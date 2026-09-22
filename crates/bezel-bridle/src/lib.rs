@@ -645,6 +645,68 @@ mod tests {
         assert!(!shadow.contains("\"blocked\":true"));
         assert!(!shadow.contains("jev uncertain"));
         let _ = std::fs::remove_dir_all(&repo);
+
+        let dirty = dirty_repo();
+        let dirty_shadow = bash_no_key("shadow", &dirty);
+        let dirty_active = bash_no_key("active", &dirty);
+        assert_eq!(dirty_shadow, router_golden("bash-shadow-dirty.json"));
+        assert_eq!(dirty_active, router_golden("bash-active-dirty.json"));
+        assert!(dirty_shadow.contains("\"available\":[\"check\",\"review\"]"));
+        assert!(dirty_shadow.contains("\"check\":true"));
+        assert!(dirty_shadow.contains("\"review\":true"));
+        assert!(dirty_shadow.contains("\"blocked\":false"));
+        assert!(!dirty_shadow.contains("jev uncertain"));
+        assert!(dirty_active.contains("\"choice\":\"escalate\""));
+        assert!(dirty_active.contains("\"gate\":\"hold\""));
+        assert!(dirty_active.contains("\"missingKey\":true"));
+        assert!(!dirty_active.contains("jev uncertain"));
+        let _ = std::fs::remove_dir_all(&dirty);
+    }
+
+    fn dirty_repo() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("bezel-router-g3-dirty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            let run = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .env("HOME", &dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "jev")
+                .env("GIT_AUTHOR_EMAIL", "jev@example.com")
+                .env("GIT_COMMITTER_NAME", "jev")
+                .env("GIT_COMMITTER_EMAIL", "jev@example.com")
+                .output()
+                .unwrap_or_else(|err| panic!("git {}: {err}", args.join(" ")));
+            assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+        };
+        git(&["init"]);
+        std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+        git(&[
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "user.name=jev",
+            "-c",
+            "user.email=jev@example.com",
+            "add",
+            "a.txt",
+        ]);
+        git(&[
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "user.name=jev",
+            "-c",
+            "user.email=jev@example.com",
+            "commit",
+            "-m",
+            "init",
+        ]);
+        std::fs::write(dir.join("a.txt"), "two\n").unwrap();
+        dir
     }
 
     fn facts_golden(name: &str) -> String {

@@ -466,20 +466,45 @@ mod tests {
     }
 
     #[test]
-    fn hook_command_reads_stdin_and_exits_2_on_deny() {
-        let raw = testdata("grok-pretool-bash.json");
-        let (defer_code, deferred) = hook_command(&raw, &[("JEV_MODE", "shadow")]);
-        assert_eq!(defer_code, 0);
-        assert!(deferred.contains("\"decision\":\"defer\""));
-        assert!(!deferred.contains("\"decision\":\"allow\""));
-        let (deny_code, denied) = hook_command(&raw, &[("JEV_MODE", "active")]);
-        assert_eq!(deny_code, 2);
-        assert!(denied.contains("\"decision\":\"deny\""));
-        assert!(denied.contains(
-            "jev choice=escalate gate=hold policy=omapi-loop-stop-policy@1 detail=missing_key question=Is the judge available for this action?"
-        ));
-        assert!(!denied.contains("jev uncertain"));
-        assert!(denied.ends_with('\n'));
+    fn hook_command_table_matches_node_stdin() {
+        let bash = testdata("grok-pretool-bash.json");
+        let rows = [
+            (
+                bash.as_str(),
+                &[("JEV_MODE", "active")][..],
+                2,
+                "{\"decision\":\"deny\",\"reason\":\"jev choice=escalate gate=hold policy=omapi-loop-stop-policy@1 detail=missing_key question=Is the judge available for this action?\"}\n",
+            ),
+            (
+                bash.as_str(),
+                &[("JEV_MODE", "shadow")][..],
+                0,
+                "{\"decision\":\"defer\",\"reason\":\"shadow\"}\n",
+            ),
+            (
+                "not-json",
+                &[("JEV_MODE", "active")][..],
+                2,
+                "{\"decision\":\"deny\",\"reason\":\"jev uncertain\"}\n",
+            ),
+            (
+                "",
+                &[("JEV_MODE", "active")][..],
+                2,
+                "{\"decision\":\"deny\",\"reason\":\"jev uncertain\"}\n",
+            ),
+            (
+                "",
+                &[("JEV_MODE", "shadow")][..],
+                0,
+                "{\"decision\":\"defer\",\"reason\":\"shadow\"}\n",
+            ),
+        ];
+        for (stdin, env, code, stdout) in rows {
+            let (got_code, got) = hook_command(stdin, env);
+            assert_eq!(got_code, code, "{stdin:?} {env:?}");
+            assert_eq!(got, stdout, "{stdin:?} {env:?}");
+        }
     }
 
     #[test]

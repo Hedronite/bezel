@@ -127,22 +127,34 @@ pub fn hook_command(stdin: &str, env: &[(&str, &str)]) -> (i32, String) {
     let event = parse_hook_event(stdin).unwrap_or(HookEvent {
         tool_name: String::new(),
     });
+    let first = decide_hook(&event, &modes, None);
+    let matched = !event.tool_name.is_empty()
+        && pretool_stamp(&event.tool_name).as_ref().is_some_and(|row| row.matched);
     let has_key = env
         .iter()
         .any(|(key, value)| *key == "TYPESAFE_API_KEY" && !value.is_empty());
+    // Malformed stdin, an empty tool, bypass, and an unmatched tool never see the router.
+    if !matched || modes.bypass || first.reason == "bypass" || first.reason == "unmatched" {
+        return (first.exit_code, hook_stdout(&first));
+    }
     let verdict = if !has_key && modes.jev_mode == "active" {
         Some(missing_key_verdict())
     } else {
         None
     };
-    let mut decision = decide_hook(&event, &modes, verdict.as_ref());
-    if !has_key && decision.decision == "deny" && !decision.reason.contains("detail=") {
+    let decision = annotate_missing_key(decide_hook(&event, &modes, verdict.as_ref()));
+    (decision.exit_code, hook_stdout(&decision))
+}
+
+/// Hold suffix only on a router `jev choice=` line. Never rewrite `jev uncertain`.
+fn annotate_missing_key(mut decision: HookOut) -> HookOut {
+    if decision.reason.starts_with("jev choice=") && !decision.reason.contains("detail=") {
         decision.reason = format!(
             "{} detail=missing_key question=Is the judge available for this action?",
             decision.reason
         );
     }
-    (decision.exit_code, hook_stdout(&decision))
+    decision
 }
 
 fn missing_key_verdict() -> GateVerdict {

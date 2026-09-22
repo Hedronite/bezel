@@ -34,7 +34,8 @@ stdenvNoCC.mkDerivation {
     runHook preInstall
 
     mkdir -p $out/lib/jev-router/node_modules/@typesafe-ai/sdk
-    cp jev-router.mjs policy.mjs facts.mjs check.mjs loop-stop.mjs permission.mjs catalog.mjs calls.mjs package.json $out/lib/jev-router/
+    cp jev-router.mjs policy.mjs facts.mjs check.mjs loop-stop.mjs permission.mjs catalog.mjs calls.mjs harness.mjs package.json $out/lib/jev-router/
+    cp -r testdata $out/lib/jev-router/testdata
     tar -xzf ${sdk} -C $out/lib/jev-router/node_modules/@typesafe-ai/sdk --strip-components=1
 
     mkdir -p $out/bin

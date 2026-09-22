@@ -57,6 +57,7 @@ From a clone:
 nix build .#omapi
 nix build .#jev-router
 nix build .#cursor-agent-jev
+nix build .#grok-build-jev
 ```
 
 Default `omapi` wraps a host `omp` (or `$OMP_BIN`). If neither is present, it exits **127** and tells you so.
@@ -93,6 +94,7 @@ nix build .#omapi-pinned
 | **`omapi-pinned`** | Same wrap, targeting a fetchurl pin of [oh-my-pi v18.2.6](https://github.com/can1357/oh-my-pi/releases/tag/v18.2.6). Not omp source. |
 | **`jev-router`** | Node router: asks Typesafe Choice, prints a JSON verdict. Loop-stop (`continue` / `stop` / `escalate`), `jev-router --check` for a shadow diff check, shadow permission catalogs, and a tiny tool catalog (`--catalog`, `--schema NAME`). |
 | **`cursor-agent-jev`** | Runs `jev-router`, then execs `cursor-agent` (`cursor-agent` must already be on `PATH`). Shadow never blocks; active honors continue/auto only. `--catalog` and `--schema` print and do not exec. |
+| **`grok-build-jev`** | Grok Build PreToolUse adapter. Calls `jev-router` and prints `defer` or `deny`. Does not install a host hook. |
 
 ## Jev
 
@@ -147,6 +149,16 @@ cursor-agent-jev --schema Bash
 
 MCP tool intent can also be ranked into a typed call (best and top-X) on that same route-workflow id. The call leaves the router as a FACET `tool_call`. The router does not invoke the tool. This surface defaults to shadow. `JEV_TYPED_CALL_MODE=active` is the flip, and it is not set in the flake. Until that export, MCP stays ask. How to run: [docs/SPIKE-calls.md](docs/SPIKE-calls.md).
 
+### Grok Build harness
+
+`grok-build-jev` is the entrypoint Grok Build calls. It does not keep a second class map or a second TypeSafe client. `hook` reads a PreToolUse event and prints `defer` or `deny`. `config` prints the hook JSON; this repo does not install it. Modes stay shadow until you export `active`. `JEV_BYPASS` is still only `1` or `true`.
+
+```sh
+node packages/jev-router/harness.mjs smoke
+```
+
+How to run: [docs/GROK-BUILD.md](docs/GROK-BUILD.md).
+
 ## Skills
 
 Skills are a flake input — the sole source of truth. This repo ships `skills-stub` so the input is a valid omp skills tree (`*/SKILL.md`) on day one. The stub includes `bootstrap` and a shadow `check` skill (`jev-router --check`). Home Manager only symlinks that store path to `~/.config/omp/agent/skills`. When you have a real skills repo, change `inputs.skills.url` and the lock; do not copy a second `skills/` tree into this overlay.
@@ -173,6 +185,7 @@ If a future omp release drops a slice, `packages/omp-pin.nix` **throws** for tha
 - `omapi-pinned` is opt-in (180–240 MB fetchurl).
 - Jev defaults to shadow. `jev-router --check` is the shadow diff check; empty findings are not approval. Loop-stop is shadow-first; active `stop`/`escalate` do not exec.
 - Tool catalog is a tiny always-on index of the existing policy ids. Full schema is `jev-router --schema NAME` and is not an allow. Permission catalogs stay shadow.
+- `grok-build-jev` adapts those controls for Grok Build. Default modes stay shadow. The harness does not install a host hook.
 - Skills ship as `skills-stub` until you swap the input URL.
 
 ## Contributing
@@ -181,7 +194,7 @@ Issues and pull requests are welcome. Match CI from a clone:
 
 ```sh
 nix flake check -L
-nix build -L .#omapi .#jev-router .#cursor-agent-jev
+nix build -L .#omapi .#jev-router .#cursor-agent-jev .#grok-build-jev
 ```
 
 Do not commit secrets. `TYPESAFE_API_KEY` and other keys belong in the process environment, not the flake.

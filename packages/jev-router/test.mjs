@@ -5,7 +5,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,6 +30,7 @@ import {
   tinyCatalog,
 } from "./catalog.mjs";
 import { runCheck } from "./check.mjs";
+import { decideHook, harnessConfig, harnessModes, parseHookEvent, runSmoke } from "./harness.mjs";
 import { availableCapabilities, diffPresent, gatherDiff, gatherFacts } from "./facts.mjs";
 import { clipDigest, decideLoopStop, missingKeyLoop, shouldExecAgent } from "./loop-stop.mjs";
 import {
@@ -1737,6 +1738,196 @@ const cases = [
     const hookLine = run.stdout.trim().split("\n").at(-1);
     assert.equal(hookLine.includes("jsonrpc"), false);
     assert.equal(hookLine.includes("tools/call"), false);
+  }),
+
+  test("grok build harness uses the existing map and does not add a client", () => {
+    const src = readFileSync(join(here, "harness.mjs"), "utf8");
+    assert.equal((src.match(/new TypeSafeClient\(/g) || []).length, 0);
+    assert.match(src, /from "\.\/policy\.mjs"/);
+    assert.match(src, /PRETOOL_MATCHER/);
+    assert.match(src, /isJevBypass/);
+    assert.match(src, /pretoolHookDecision/);
+    assert.match(src, /tinyCatalog/);
+    assert.match(src, /decideTypedCalls/);
+    assert.match(src, /decidePermission/);
+    assert.doesNotMatch(src, /PRETOOL_CLASSES\s*=/);
+    assert.doesNotMatch(src, /web_search\|WebSearch/);
+    const config = harnessConfig();
+    assert.equal(config.hooks.PreToolUse.length, 1);
+    assert.equal(config.hooks.PreToolUse[0].matcher, PRETOOL_MATCHER);
+    const blob = JSON.stringify(config);
+    assert.equal(blob.includes("TYPESAFE_API_KEY"), false);
+    assert.equal(blob.includes("JEV_MODE"), false);
+    assert.equal(blob.includes('"allow"'), false);
+    const modes = harnessModes({ JEV_MODE: "active", JEV_PERMISSION_MODE: "yes", JEV_TYPED_CALL_MODE: "true" });
+    assert.equal(modes.jevMode, "active");
+    assert.equal(modes.permissionMode, "shadow");
+    assert.equal(modes.typedCallMode, "shadow");
+    assert.equal(modes.bypass, false);
+    const snake = parseHookEvent('{"tool_name":"Bash","tool_input":{"command":"npm test"}}');
+    assert.equal(snake.ok, true);
+    assert.equal(snake.event.toolName, "Bash");
+    assert.equal(snake.event.toolInput.command, "npm test");
+  }),
+
+  test("grok build smoke proves class, catalog, typed call, and permission mode", () => {
+    const report = runSmoke();
+    assert.equal(report.ok, true);
+    assert.equal(report.pretool.class, "shell");
+    assert.equal(report.pretool.policyId, LOOP_STOP_POLICY.version);
+    assert.equal(report.pretool.matched, true);
+    const ids = [...new Set(report.classes.map((row) => row.policyId))].sort();
+    assert.deepEqual(ids, [CHECK_POLICY.version, LOOP_STOP_POLICY.version, ROUTING_POLICY.version].sort());
+    assert.equal(report.catalog.kind, "tiny");
+    assert.equal(report.catalog.schemaInline, false);
+    assert.ok(report.catalog.bytes < 900);
+    assert.equal(report.schemaDump.decision, "defer");
+    assert.equal(report.schemaDump.typedCall, false);
+    assert.equal(report.schemaDump.autoAllow, false);
+    assert.equal(report.calls.transport, "facet");
+    assert.equal(report.calls.op, "tool_call");
+    assert.equal(report.calls.initiated, false);
+    assert.equal(report.calls.autoAllow, false);
+    assert.equal(report.calls.policyId, ROUTING_POLICY.version);
+    assert.equal(report.permission.shadow.decision, "defer");
+    assert.equal(report.permission.shadow.honor, false);
+    assert.equal(report.permission.shadow.blocked, false);
+    assert.equal(report.permission.active.decision, "deny");
+    assert.equal(report.permission.active.honor, true);
+    assert.equal(report.permission.uncertain.decision, "deny");
+    assert.equal(report.permission.emptyFindings.reason, "empty_findings_not_approval");
+    assert.equal(report.permission.emptyFindings.decision, "deny");
+    assert.equal(report.permission.emptyFindings.approval, false);
+    assert.equal(report.permission.keyAbsent.mode, "shadow");
+    assert.equal(report.permission.keyAbsent.blocked, false);
+    assert.equal(report.bypass.decision, "defer");
+    assert.equal(report.bypass.reason, "bypass");
+    assert.equal(report.notBypass.decision, "deny");
+    assert.equal(report.irreversible.decision, "deny");
+    assert.equal(report.irreversible.code, "F454");
+    assert.equal(report.irreversible.initiated, false);
+    assert.equal(report.uncertainActive.decision, "deny");
+    assert.equal(report.uncertainShadow.decision, "defer");
+    assert.equal(report.readStaysDefer.decision, "defer");
+    assert.equal(report.loopStopWins.decision, "deny");
+    assert.equal(JSON.stringify(report).includes('"decision":"allow"'), false);
+    const docPath = [join(here, "GROK-BUILD.md"), join(here, "../../docs/GROK-BUILD.md")].find((path) =>
+      existsSync(path),
+    );
+    assert.ok(docPath, "GROK-BUILD.md missing");
+    const doc = readFileSync(docPath, "utf8");
+    assert.match(doc, /node packages\/jev-router\/harness\.mjs smoke/);
+    assert.match(doc, /JEV_BYPASS/);
+    assert.match(doc, /JEV_PERMISSION_MODE/);
+    assert.match(doc, /JEV_TYPED_CALL_MODE/);
+    assert.match(doc, /JEV_MODE/);
+    assert.match(doc, /shadow/);
+    assert.match(doc, /not approval/);
+  }),
+
+  test("grok build hook maps a class to a policy id and fail-closes an empty verdict", () => {
+    const dir = mkdtempSync(join(tmpdir(), "grok-harness-"));
+    const router = join(dir, "router");
+    const argvLog = join(dir, "argv");
+    const called = join(dir, "called");
+    writeFileSync(
+      router,
+      `#!/bin/sh
+if [ "\${HARNESS_MARK:-}" = "poison" ]; then
+  : > "\${HARNESS_CALLED_FILE:?}"
+  exit 99
+fi
+printf '%s\\n' "$*" > "\${HARNESS_ARGV_LOG:-/dev/null}"
+printf '%s\\n' '{"ok":true,"mode":"active","choice":"stop","gate":"hold","blocked":true,"exec":false,"bypass":false}'
+`,
+    );
+    chmodSync(router, 0o755);
+    const event = readFileSync(join(here, "testdata", "grok-pretool-bash.json"), "utf8");
+    const baseEnv = {
+      ...process.env,
+      JEV_ROUTER: router,
+      JEV_BYPASS: "",
+      JEV_MODE: "active",
+      JEV_PERMISSION_MODE: "",
+      JEV_TYPED_CALL_MODE: "",
+      TYPESAFE_API_KEY: "",
+      HARNESS_ARGV_LOG: argvLog,
+    };
+    const hook = spawnSync(process.execPath, [join(here, "harness.mjs"), "hook"], {
+      input: event,
+      env: baseEnv,
+      encoding: "utf8",
+    });
+    assert.equal(hook.status, 2, hook.stderr);
+    const denied = JSON.parse(hook.stdout.trim());
+    assert.equal(denied.decision, "deny");
+    assert.match(denied.reason, /policy=omapi-loop-stop-policy@1/);
+    assert.equal(denied.decision === "allow", false);
+    const argv = readFileSync(argvLog, "utf8");
+    assert.match(argv, /--tool-name/);
+    assert.match(argv, /Bash/);
+    assert.match(argv, /--tool-input/);
+    assert.match(argv, /npm test/);
+
+    const bypass = spawnSync(process.execPath, [join(here, "harness.mjs"), "hook"], {
+      input: event,
+      env: { ...baseEnv, JEV_BYPASS: "1", HARNESS_MARK: "poison", HARNESS_CALLED_FILE: called },
+      encoding: "utf8",
+    });
+    assert.equal(bypass.status, 0, bypass.stderr);
+    assert.deepEqual(JSON.parse(bypass.stdout.trim()), { decision: "defer", reason: "bypass" });
+    assert.equal(existsSync(called), false);
+
+    const yes = decideHook({
+      event: { toolName: "Bash" },
+      env: { JEV_BYPASS: "yes" },
+      verdict: { mode: "active", choice: "stop", gate: "hold", blocked: true },
+    });
+    assert.equal(yes.decision, "deny");
+
+    writeFileSync(join(dir, "garbage"), "#!/bin/sh\nprintf '%s\\n' 'not-json'\n");
+    chmodSync(join(dir, "garbage"), 0o755);
+    const activeEmpty = spawnSync(process.execPath, [join(here, "harness.mjs"), "hook"], {
+      input: event,
+      env: { ...baseEnv, JEV_ROUTER: join(dir, "garbage"), JEV_MODE: "active", JEV_BYPASS: "" },
+      encoding: "utf8",
+    });
+    assert.equal(activeEmpty.status, 2, activeEmpty.stderr);
+    assert.deepEqual(JSON.parse(activeEmpty.stdout.trim()), { decision: "deny", reason: "jev uncertain" });
+    const shadowEmpty = spawnSync(process.execPath, [join(here, "harness.mjs"), "hook"], {
+      input: event,
+      env: { ...baseEnv, JEV_ROUTER: join(dir, "garbage"), JEV_MODE: "shadow", JEV_BYPASS: "" },
+      encoding: "utf8",
+    });
+    assert.equal(shadowEmpty.status, 0, shadowEmpty.stderr);
+    assert.deepEqual(JSON.parse(shadowEmpty.stdout.trim()), { decision: "defer", reason: "shadow" });
+
+    const smoke = spawnSync(process.execPath, [join(here, "harness.mjs"), "smoke"], { encoding: "utf8" });
+    assert.equal(smoke.status, 0, smoke.stderr);
+    assert.equal(JSON.parse(smoke.stdout).ok, true);
+    assert.equal(smoke.stdout.includes('"decision":"allow"'), false);
+
+    const mark = ["omapi", "mark"].join("-");
+    const banner = ["oma", "on"].join(" ");
+    const quiet = (label, args, input) => {
+      const run = spawnSync(process.execPath, [join(here, "harness.mjs"), ...args], {
+        input,
+        env: { ...baseEnv, JEV_BYPASS: "", JEV_MODE: "shadow" },
+        encoding: "utf8",
+      });
+      const blob = `${run.stdout}\n${run.stderr}`;
+      assert.equal(blob.includes(mark), false, label);
+      assert.equal(blob.includes(banner), false, label);
+      return run;
+    };
+    const catalog = quiet("catalog", ["catalog"]);
+    assert.equal(catalog.status, 0, catalog.stderr);
+    assert.equal(catalog.stderr, "");
+    assert.equal(JSON.parse(catalog.stdout).kind, "tiny");
+    const config = quiet("config", ["config"]);
+    assert.equal(config.status, 0, config.stderr);
+    assert.equal(config.stderr, "");
+    rmSync(dir, { recursive: true, force: true });
   }),
 ];
 

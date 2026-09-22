@@ -510,7 +510,7 @@ const cases = [
     assert.equal(byId.mcp.pattern, MCP_TOOL_PATTERN);
   }),
 
-  test("matcher covers legacy castle tokens plus shell, write, and MCP", () => {
+  test("matcher covers existing hook tokens plus shell, write, and MCP", () => {
     const legacy = ["web_search", "WebFetch", "spawn_subagent", "Task"];
     const shell = ["Bash", "run_terminal_command", "run_terminal_cmd"];
     const write = ["Write", "Edit", "MultiEdit", "search_replace"];
@@ -602,7 +602,7 @@ const cases = [
     assert.match(callsSrc, /tool_call/);
   }),
 
-  test("POLICY-MAP.md quotes the matcher and the castle files", () => {
+  test("POLICY-MAP.md quotes the matcher and the hook files", () => {
     const docPath = [join(here, "POLICY-MAP.md"), join(here, "../../docs/POLICY-MAP.md")].find((path) =>
       existsSync(path),
     );
@@ -617,7 +617,7 @@ const cases = [
     assert.match(doc, /JEV_BYPASS/);
     assert.match(doc, /never `allow`|never emits `allow`|do not emit `allow`|Never emit `\{"decision":"allow"\}`/);
     assert.match(doc, /JEV_PERMISSION_MODE/);
-    assert.match(doc, /Marci re-COMPAT/);
+    assert.match(doc, /until this permission surface has been re-checked/);
     assert.match(doc, /allow→continue/);
     assert.match(doc, /Key absent forces this surface to shadow/);
     assert.match(doc, /JEV_MODE=active` does not honor the catalog/);

@@ -7,13 +7,13 @@
  *   JEV_MODE          shadow (default) | active
  *   JEV_PERMISSION_MODE  shadow (default) | active
  *                    Permission catalogs only. Does not follow JEV_MODE.
- *                    active honors them only after Marci re-COMPAT, and only
- *                    when TYPESAFE_API_KEY is set (key absent stays shadow).
+ *                    active honors them only after this surface is re-checked,
+ *                    and only when TYPESAFE_API_KEY is set (key absent stays shadow).
  *   JEV_TYPED_CALL_MODE  shadow (default) | active
  *                    Typed Calls only. Does not follow JEV_MODE or
  *                    JEV_PERMISSION_MODE. active honors a FACET tool_call
  *                    (read effect, thresholds met). Key absent stays shadow.
- *                    Do not set this in the flake. Castle hooks leave MCP on
+ *                    Do not set this in the flake. Grok hooks leave MCP on
  *                    ask until this surface is merged and the operator flips it.
  *   JEV_BYPASS        1|true skips the Choice call (same predicate as cursor-agent-jev)
  *   JEV_MODEL         optional, default jev-latest
@@ -318,7 +318,7 @@ function withPermission(payload, extra = {}) {
   const permission = payload && payload.bypass === true ? permissionBypass(matchedClassId()) : permissionDecision(extra);
   if (permission) {
     log(
-      `permission surface=${permission.surface} mode=${permission.mode} honor=${permission.honor} mapped=${permission.mapped ?? ""} reason=${permission.reason} blocked=${permission.blocked} policy=${permission.policyId} (shadow unless JEV_PERMISSION_MODE=active after Marci re-COMPAT)`,
+      `permission surface=${permission.surface} mode=${permission.mode} honor=${permission.honor} mapped=${permission.mapped ?? ""} reason=${permission.reason} blocked=${permission.blocked} policy=${permission.policyId} (shadow unless JEV_PERMISSION_MODE=active after a re-check)`,
     );
   }
   return applyPermissionVerdict(payload, permission);

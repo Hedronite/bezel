@@ -1,5 +1,5 @@
 {
-  description = "omapi-overlay: harness-agnostic skills, Jev gates, and tooling. omp is an optional engine pin.";
+  description = "Nix overlay: skills, Jev policy gates, and a tool catalog for an agent harness you already run.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -111,7 +111,7 @@
         in
         {
           # Cheap overlay packages. omapi-pinned is NOT a check:
-          # it fetchurls the 180–240MB stock omp binary.
+          # it fetchurls the 180–240MB pinned oh-my-pi binary.
           omapi = self.packages.${system}.omapi;
           jev-router = self.packages.${system}.jev-router;
           cursor-agent-jev = self.packages.${system}.cursor-agent-jev;

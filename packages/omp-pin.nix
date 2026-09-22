@@ -5,8 +5,8 @@
   autoPatchelfHook,
 }:
 
-# Upstream omp binary pin (can1357/oh-my-pi release assets).
-# fetchurl of upstream prebuilts. This repo does not vendor omp sources.
+# Pinned oh-my-pi release binary (can1357/oh-my-pi release assets).
+# fetchurl of the published prebuilt. This file does not unpack source.
 #
 # Hashes from https://github.com/can1357/oh-my-pi/releases/download/v18.2.6/SHA256SUMS.txt
 # converted to SRI. If a future system has no artifact, throw (CI honesty).
@@ -38,7 +38,7 @@ let
 
   source =
     sources.${system} or (throw ''
-      omapi-overlay: no stock omp pin for system '${system}'.
+      omapi-overlay: no oh-my-pi ${version} binary for system '${system}'.
       Documented pins: ${lib.concatStringsSep ", " (lib.attrNames sources)}.
       Do not fake a green build — mark skip in CI or set OMP_BIN and use omapi (runtime wrap).
     '');
@@ -64,7 +64,7 @@ stdenvNoCC.mkDerivation {
   '';
 
   meta = {
-    description = "Upstream oh-my-pi v${version} prebuilt (fetchurl pin)";
+    description = "Fetched oh-my-pi v${version} binary used by omapi-pinned";
     homepage = "https://github.com/can1357/oh-my-pi";
     downloadPage = "https://github.com/can1357/oh-my-pi/releases/tag/v${version}";
     license = lib.licenses.mit;

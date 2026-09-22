@@ -1,6 +1,6 @@
-# PreToolUse ↔ omapi policyId (Stitch S1)
+# PreToolUse policy ids
 
-Castle Grok hooks and this overlay share one map and one `JEV_BYPASS` predicate.
+Grok hooks and this overlay share one map and one `JEV_BYPASS` predicate.
 The hook calls `jev-router`. It does not construct a TypeSafe client.
 
 Canonical matcher and class table: `PRETOOL_MATCHER` / `PRETOOL_CLASSES` in
@@ -9,7 +9,7 @@ module wins — `node packages/jev-router/test.mjs` checks the fence below.
 
 ## GateVerdict
 
-`jev-router` prints one JSON object. `cursor-agent-jev` and the castle hook
+`jev-router` prints one JSON object. `cursor-agent-jev` and the Grok hook
 both read it. There is no second verdict type.
 
 | Field | Values | Who decides |
@@ -71,8 +71,8 @@ The stamp remains the policyId. See [Typed Calls](#typed-calls).
 
 ## Matcher
 
-Replace `hooks.PreToolUse[0].matcher` with this value. It keeps today's castle
-tokens (`web_search`, `WebFetch`, `spawn_subagent`, `Task`) and adds shell,
+Replace `hooks.PreToolUse[0].matcher` with this value. It keeps the existing
+hook tokens (`web_search`, `WebFetch`, `spawn_subagent`, `Task`) and adds shell,
 write, and MCP.
 
 ```pretool-matcher
@@ -134,7 +134,7 @@ deny. In shadow that failure stays defer.
 permission stop / escalate denies even if `JEV_MODE` is shadow, and a
 permission continue does not override a loop stop. The hook still emits
 `defer` or `deny`, never `allow`. Default permission mode is shadow, so this
-row does not fire until Marci re-COMPATs. See [Permission catalogs](#permission-catalogs).
+row does not fire until this permission surface has been re-checked. See [Permission catalogs](#permission-catalogs).
 
 `JEV_TYPED_CALL_MODE=active` is a third gate, only for `calls`. While it is
 honoring, a typed-call stop / escalate denies even if `JEV_MODE` is shadow,
@@ -146,9 +146,9 @@ set that variable in the hook JSON or the flake.
 
 `decision` is only `defer` or `deny`.
 
-## Castle apply checklist
+## Hook apply checklist
 
-Hooks are not vendored here. Apply this on the castle host. Do not add a
+Hooks are not vendored here. Apply this on the machine that runs the Grok hooks. Do not add a
 second client, a second bypass variable, or a second matcher entry.
 
 ### 1. `~/.grok/hooks/jev-omapi.json`
@@ -218,11 +218,11 @@ Code deny wins over a model allow. A permission continue does not clear a loop s
 
 Key absent forces this surface to shadow (`reason: missing_key` or a logged code deny with `blocked: false`). That stays correct even if `JEV_PERMISSION_MODE=active`. `JEV_MODE=active` does not honor the catalog.
 
-### Flip after Marci re-COMPAT
+### Turn on permission mode after a re-check
 
-Do not export active before Marci re-COMPATs this surface. Shadow is the default and the only mode that is in COMPAT today.
+Do not export `JEV_PERMISSION_MODE=active` until this permission surface has been re-checked. Shadow is the default.
 
-After re-COMPAT:
+After that re-check:
 
 ```sh
 export JEV_PERMISSION_MODE=active

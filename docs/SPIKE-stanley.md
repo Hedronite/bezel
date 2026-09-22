@@ -1,8 +1,9 @@
-# SPIKE — Stanley patterns in omapi-overlay (shadow check)
+# Shadow diff check (`jev-router --check`)
 
-Steal Jev-first bounded workflow into this overlay. **Do not** vendor
-[stanley-code](https://github.com/devagrawal09/stanley-code), install a Stanley
-binary, call Pi, or run an improve/promote loop.
+Bounded check: code gathers evidence, Jev classifies, code applies thresholds.
+**Do not** vendor
+[stanley-code](https://github.com/devagrawal09/stanley-code), install that
+project's CLI, call another agent binary, or run an improve/promote loop.
 
 Pattern source (MIT, reimplemented thin): deterministic `available(facts)` →
 one Jev Choice → code thresholds → `{ findings, parked, notChecked }`. Empty
@@ -30,7 +31,7 @@ nix build .#jev-router
   --diff-file packages/jev-router/testdata/skip-marker.diff
 ```
 
-Skill (flake skills input; Home Manager symlinks it for the omp harness): `skills-stub/check/SKILL.md`.
+Skill (Home Manager skills input): `skills-stub/check/SKILL.md`.
 
 ## What you get
 
@@ -73,10 +74,10 @@ nix flake check -L   # includes jev-router-unit + jev-check-shadow
 
 `JEV_BYPASS=1` or `JEV_BYPASS=true` still skips the exec Choice and never blocks. `--check` is not the kill switch. Shared predicate: [POLICY-MAP.md](POLICY-MAP.md).
 
-Loop-stop / escalate (Suraj #4 + #10) is a sibling spike:
+Loop-stop / escalate is a sibling spike:
 [docs/SPIKE-loop-stop.md](SPIKE-loop-stop.md). `--check` is unchanged.
 
 ## Out of scope (hard no)
 
-Stanley CLI/npm · Pi fallback · improve-worker · `--promote-candidate` ·
+stanley-code CLI/npm · another agent binary · improve-worker · `--promote-candidate` ·
 baking `TYPESAFE_API_KEY` into the flake.

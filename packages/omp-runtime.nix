@@ -30,9 +30,9 @@ writeShellApplication {
     unset IFS
 
     if [ -z "$found" ]; then
-      echo "omapi-overlay: stock omp not found." >&2
-      echo "Install omp (https://omp.sh) or set OMP_BIN to the upstream binary." >&2
-      echo "This overlay does not vendor omp source. See README (runtime wrap vs omapi-pinned)." >&2
+      echo "omapi-overlay: omp binary not found." >&2
+      echo "Install omp from https://omp.sh or set OMP_BIN to that binary." >&2
+      echo "Or build .#omapi-pinned for the fetched release. See the README." >&2
       exit 127
     fi
     exec "$found" "$@"

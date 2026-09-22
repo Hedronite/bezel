@@ -8,4 +8,5 @@ description: Placeholder skill shipped with omapi-overlay skills-stub until omah
 This skill exists so the skills flake input is a valid skills directory
 (`*/SKILL.md`) while `omahedron-skills` is unpublished.
 
-Home Manager installs that input at `~/.config/omp/agent/skills` for the omp harness.
+Home Manager installs the input at `~/.config/omp/agent/skills`, the directory
+the wrapped harness loads.

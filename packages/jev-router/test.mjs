@@ -375,7 +375,8 @@ exec ${shQuote(process.execPath)} ${shQuote(script)} "$@"
           },
         },
       );
-      assert.equal(run.status, 0, `${args.join(" ")}\n${run.stderr}`);
+      const spawnError = run.error && run.error.message ? run.error.message : run.error || "";
+      assert.equal(run.status, 0, `${args.join(" ")}\n${run.stderr}\n${spawnError}`);
     };
     git(["init"]);
     writeFileSync(join(dir, "a.js"), "test('ok', () => { expect(1).toBe(1); });\n");

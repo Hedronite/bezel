@@ -9,7 +9,6 @@
 <p align="center">
   A harness overlay: skills, a Jev toolkit, and adapters.<br>
   <strong>a Hedronite setting.</strong><br>
-  Not Omarchy. Not an omp fork. Not a splash.
 </p>
 
 <p align="center">
@@ -21,7 +20,6 @@
 
 <p align="center">
   <a href="#what-bezel-is">What Bezel is</a> ·
-  <a href="#what-bezel-is-not">What Bezel is not</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#packages">Packages</a> ·
   <a href="#names">Names</a> ·
@@ -52,14 +50,6 @@ Bezel is the supplement, not the harness. It ships the suite in one Nix flake: s
 Bend2 is a later engine. It is not in this tree. The Jev router is still JavaScript. A Rust rewrite is a later phase.
 
 Use `overlays.default`, `homeManagerModules.default`, or `packages.<system>.*`.
-
-## What Bezel is not
-
-| Not this | What that means |
-| --- | --- |
-| Omarchy | Bezel is not a Linux distribution, a desktop, or an OS image. |
-| An omp fork | There is no omp source here. `bezel-omp` execs the upstream `omp` binary and then gets out of the way. |
-| A splash | Launch output is the wrapped program's output. There is no banner and no TTY gate. |
 
 ## Quick start
 

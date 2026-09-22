@@ -38,7 +38,7 @@ Calls: **STEAL-cut** (do it), **WATCH** (true snag, do not cut in this pass), **
 | `templates/models.yml.example` "Cursor / omp auth stays on the host" | HOLD | Secret-handling constraint. The writer example is not a harness ranking. |
 | `omapi-planes-shim` | HOLD | Pre-exec filter. Not branding. |
 | Cline (or any unnamed harness) second-class copy | HOLD | No Cline strings in the tree. Do not invent an adapter. |
-| Launch splash inside `omapi` / `cursor-agent-jev` | HOLD | Not present. The mark lived in README and `assets/` only (#9). |
+| `cursor-agent-jev` success-path stderr | STEAL-cut | Was HOLD. #15 silenced the success path on stderr: no bypass/shadow/active/exec/verdict line before exec, and router stderr is captured, not forwarded onto the child. Fail-closed paths still print and exit 2. The launch mark/splash was never in the binary — only README/`assets/`, removed by #9. |
 | POLICY-MAP, permission, typed-call, loop-stop docs and code | HOLD | Gate behavior. Out of this pass. |
 
 ## Checked, not a snag

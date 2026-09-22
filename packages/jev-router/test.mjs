@@ -8,6 +8,15 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  POLICY_IDS,
+  buildGateState,
+  fullSchema,
+  mappedToolNames,
+  orphanPolicyIds,
+  schemaDumpCall,
+  tinyCatalog,
+} from "./catalog.mjs";
 import { runCheck } from "./check.mjs";
 import { availableCapabilities, diffPresent, gatherDiff, gatherFacts } from "./facts.mjs";
 import { clipDigest, decideLoopStop, missingKeyLoop, shouldExecAgent } from "./loop-stop.mjs";
@@ -641,6 +650,169 @@ const cases = [
     assert.equal(checkPayload.workflow, "check");
     assert.equal(checkPayload.approval, false);
     assert.notEqual(checkPayload.choice, "bypass");
+    assert.equal(checkPayload.catalog.kind, "tiny");
+    assert.equal(JSON.stringify(checkPayload.catalog).includes("$schema"), false);
+  }),
+
+  test("tiny catalog is the PreToolUse index and has no orphan policyId", () => {
+    const catalog = tinyCatalog();
+    assert.equal(catalog.kind, "tiny");
+    assert.equal(catalog.entries.length, PRETOOL_CLASSES.length);
+    const ids = catalog.entries.map((entry) => entry.policyId);
+    assert.deepEqual(orphanPolicyIds(ids), []);
+    for (const id of POLICY_IDS) assert.ok(ids.includes(id));
+    const blob = JSON.stringify(catalog);
+    assert.ok(blob.length < 900, `tiny catalog is ${blob.length} chars`);
+    assert.equal(blob.includes("$schema"), false);
+    assert.equal(blob.includes("properties"), false);
+    assert.equal(blob.includes('"decision":"allow"'), false);
+    const mcp = catalog.entries.find((entry) => entry.class === "mcp");
+    assert.equal(mcp.policyId, ROUTING_POLICY.version);
+    assert.equal(mcp.pattern, MCP_TOOL_PATTERN);
+    assert.equal(mcp.tools, undefined);
+    const shell = catalog.entries.find((entry) => entry.class === "shell");
+    assert.deepEqual(shell.tools, ["Bash", "run_terminal_command", "run_terminal_cmd"]);
+  }),
+
+  test("every mapped tool has a full schema that the tiny index does not inline", () => {
+    const names = mappedToolNames();
+    assert.ok(names.length > 0);
+    for (const name of names) {
+      const schema = fullSchema(name, matchPretoolClass(name));
+      assert.ok(schema, name);
+      assert.equal(schema.title, name);
+      assert.equal(String(schema.$schema).includes("json-schema"), true);
+    }
+  }),
+
+  test("schemaDumpCall defers a known tool and denies anything outside the map", () => {
+    const bash = schemaDumpCall("Bash");
+    const bashHook = pretoolHookDecision(bash);
+    assert.notEqual(bashHook.decision, "allow");
+    assert.equal(bash.call, "schema-dump");
+    assert.equal(bash.found, true);
+    assert.equal(bash.class, "shell");
+    assert.equal(bash.policyId, LOOP_STOP_POLICY.version);
+    assert.equal(bash.decision, "defer");
+    assert.equal(bash.autoAllow, false);
+    assert.equal(bash.schema.properties.command.type, "string");
+    assert.equal(bash.schema.required.includes("command"), true);
+    assert.equal(JSON.stringify(bash).includes('"decision":"allow"'), false);
+
+    const edit = schemaDumpCall("search_replace");
+    assert.equal(edit.class, "write");
+    assert.equal(edit.policyId, CHECK_POLICY.version);
+    assert.equal(edit.decision, "defer");
+    assert.equal(edit.autoAllow, false);
+
+    const mcp = schemaDumpCall("linear__save_issue");
+    assert.equal(mcp.class, "mcp");
+    assert.equal(mcp.policyId, ROUTING_POLICY.version);
+    assert.equal(mcp.typedCall, false);
+    assert.equal(mcp.decision, "defer");
+    assert.equal(mcp.schema.required.includes("server"), true);
+    assert.deepEqual(orphanPolicyIds([mcp.policyId]), []);
+
+    for (const name of ["read_file", "use_tool", ""]) {
+      const denied = schemaDumpCall(name);
+      assert.equal(denied.decision, "deny");
+      assert.equal(denied.found, false);
+      assert.equal(denied.schema, null);
+      assert.equal(denied.autoAllow, false);
+      assert.equal(denied.ok, false);
+      assert.notEqual(denied.decision, "allow");
+    }
+  }),
+
+  test("buildGateState keeps the tiny catalog and strips the API key", () => {
+    const previous = process.env.TYPESAFE_API_KEY;
+    const secret = ["catalog", "test", "secret"].join("-");
+    process.env.TYPESAFE_API_KEY = secret;
+    try {
+      const state = buildGateState({
+        intent: `ship ${secret} please`,
+        TYPESAFE_API_KEY: secret,
+        apiKey: secret,
+        schema: { type: "object", properties: { command: { type: "string" } } },
+        loopStopPolicy: LOOP_STOP_POLICY,
+      });
+      const blob = JSON.stringify(state);
+      assert.equal(blob.includes(secret), false);
+      assert.equal(state.intent.includes("[redacted]"), true);
+      assert.equal(state.catalog.kind, "tiny");
+      assert.equal(state.schema, undefined);
+      assert.equal(state.TYPESAFE_API_KEY, undefined);
+      assert.equal(state.apiKey, undefined);
+      assert.equal(blob.includes("$schema"), false);
+      assert.equal(state.loopStopPolicy.version, LOOP_STOP_POLICY.version);
+    } finally {
+      if (previous === undefined) delete process.env.TYPESAFE_API_KEY;
+      else process.env.TYPESAFE_API_KEY = previous;
+    }
+  }),
+
+  test("wrap script does not flip permission catalogs or bake a key", () => {
+    const wrapPath = [join(here, "cursor-agent-jev.nix"), join(here, "..", "cursor-agent-jev.nix")].find((path) =>
+      existsSync(path),
+    );
+    assert.ok(wrapPath, "cursor-agent-jev.nix missing");
+    const wrap = readFileSync(wrapPath, "utf8");
+    assert.equal(wrap.includes("JEV_PERMISSION_MODE"), false);
+    assert.equal(wrap.includes("--schema"), true);
+    assert.equal(wrap.includes("--catalog"), true);
+    assert.equal(wrap.includes("JEV_TOOL_CATALOG"), true);
+    assert.equal(/--set(=|\s)TYPESAFE_API_KEY/.test(wrap), false);
+  }),
+
+  test("--catalog and --schema do not call Jev and do not print the key", () => {
+    const bin = process.env.JEV_ROUTER_BIN;
+    if (!bin) return;
+    const env = {
+      ...process.env,
+      JEV_MODE: "shadow",
+      JEV_BYPASS: "",
+      TYPESAFE_API_KEY: "catalog-test-secret",
+    };
+    const catalog = spawnSync(bin, ["--catalog"], { env, encoding: "utf8" });
+    assert.equal(catalog.status, 0, catalog.stderr);
+    const catalogPayload = JSON.parse(catalog.stdout.trim().split("\n").at(-1));
+    assert.equal(catalogPayload.kind, "tiny");
+    assert.equal(catalog.stdout.includes("$schema"), false);
+    assert.equal(catalog.stdout.includes("catalog-test-secret"), false);
+    assert.equal(catalog.stderr.includes("catalog-test-secret"), false);
+    assert.equal(catalog.stdout.includes('"decision":"allow"'), false);
+
+    const dumped = spawnSync(bin, ["--schema", "Bash"], { env, encoding: "utf8" });
+    assert.equal(dumped.status, 0, dumped.stderr);
+    const dumpPayload = JSON.parse(dumped.stdout.trim().split("\n").at(-1));
+    assert.equal(dumpPayload.call, "schema-dump");
+    assert.equal(dumpPayload.decision, "defer");
+    assert.equal(dumpPayload.autoAllow, false);
+    assert.equal(dumpPayload.policyId, "omapi-loop-stop-policy@1");
+    assert.equal(dumpPayload.schema.properties.command.type, "string");
+    assert.equal(dumped.stdout.includes("catalog-test-secret"), false);
+    assert.equal(dumped.stderr.includes("catalog-test-secret"), false);
+
+    const denied = spawnSync(bin, ["--schema", "read_file"], { env, encoding: "utf8" });
+    assert.equal(denied.status, 2, denied.stderr);
+    const deniedPayload = JSON.parse(denied.stdout.trim().split("\n").at(-1));
+    assert.equal(deniedPayload.decision, "deny");
+    assert.equal(deniedPayload.schema, null);
+    assert.equal(denied.stdout.includes("catalog-test-secret"), false);
+
+    const missing = spawnSync(bin, ["--schema"], { env, encoding: "utf8" });
+    assert.equal(missing.status, 2);
+
+    const shadow = spawnSync(bin, ["probe intent"], {
+      env: { ...env, TYPESAFE_API_KEY: "" },
+      encoding: "utf8",
+    });
+    assert.equal(shadow.status, 0, shadow.stderr);
+    const shadowPayload = JSON.parse(shadow.stdout.trim().split("\n").at(-1));
+    assert.equal(shadowPayload.catalog.kind, "tiny");
+    assert.equal(JSON.stringify(shadowPayload.catalog).includes("$schema"), false);
+    assert.equal(shadowPayload.choice, "unclassified");
+    assert.equal(shadow.stdout.includes("catalog-test-secret"), false);
   }),
 
   test("permission catalogs wrap the three policy ids and do not orphan one", () => {

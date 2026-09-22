@@ -154,6 +154,7 @@
             set -eu
             cp -r ${./packages/jev-router}/. .
             cp ${./docs/POLICY-MAP.md} ./POLICY-MAP.md
+            cp ${./packages/cursor-agent-jev.nix} ./cursor-agent-jev.nix
             JEV_ROUTER_BIN="${lib.getExe self.packages.${system}.jev-router}" node test.mjs
             echo ok >"$out"
           '';
@@ -262,6 +263,87 @@
             grep -q '^ran:' "$AGENT_LOG"
 
             grep -q 'stop/escalate do not exec' "$wrap"
+            echo ok >"$out"
+          '';
+
+          # Tiny catalog is always on the verdict. Full schema is a separate
+          # call and never an allow. No live Jev.
+          jev-tool-catalog = pkgs.runCommand "jev-tool-catalog" { nativeBuildInputs = [ pkgs.jq ]; } ''
+            set -eu
+            router="${lib.getExe self.packages.${system}.jev-router}"
+            wrap="${lib.getExe self.packages.${system}.cursor-agent-jev}"
+            work="$(mktemp -d)"
+            mkdir -p "$work/bin"
+
+            cat >"$work/bin/cursor-agent" <<'EOS'
+            #!/bin/sh
+            printf 'ran catalog=%s\n' "$JEV_TOOL_CATALOG" >> "$AGENT_LOG"
+            EOS
+            chmod +x "$work/bin/cursor-agent"
+
+            catj="$("$router" --catalog)"
+            echo "$catj" | jq -e '.kind == "tiny" and (.entries | length) == 5'
+            echo "$catj" | jq -e '[.entries[].policyId] | unique | sort == ["omapi-check-policy@1","omapi-loop-stop-policy@1","omapi-route-workflow-policy@1"]'
+            if echo "$catj" | grep -F '$schema' >/dev/null; then
+              echo "tiny catalog must not carry schemas" >&2
+              exit 1
+            fi
+            if echo "$catj" | grep -F '"decision":"allow"' >/dev/null; then
+              echo "catalog must not allow" >&2
+              exit 1
+            fi
+
+            schema="$("$router" --schema Bash)"
+            echo "$schema" | jq -e '.call == "schema-dump" and .decision == "defer" and .autoAllow == false and .policyId == "omapi-loop-stop-policy@1"'
+            echo "$schema" | jq -e '.schema.properties.command.type == "string"'
+            if echo "$schema" | grep -F '"decision":"allow"' >/dev/null; then
+              echo "schema dump must not allow" >&2
+              exit 1
+            fi
+
+            set +e
+            denied="$("$router" --schema read_file)"
+            rc=$?
+            set -e
+            test "$rc" -eq 2
+            echo "$denied" | jq -e '.decision == "deny" and .schema == null and .autoAllow == false'
+
+            export PATH="$work/bin:$PATH"
+
+            export AGENT_LOG="$work/schema.log"
+            : >"$AGENT_LOG"
+            "$wrap" --schema Edit >/dev/null
+            if [ -s "$AGENT_LOG" ]; then
+              echo "schema dump must not exec cursor-agent" >&2
+              exit 1
+            fi
+
+            export AGENT_LOG="$work/catalog.log"
+            : >"$AGENT_LOG"
+            "$wrap" --catalog >/dev/null
+            if [ -s "$AGENT_LOG" ]; then
+              echo "catalog query must not exec cursor-agent" >&2
+              exit 1
+            fi
+
+            export AGENT_LOG="$work/ran.log"
+            : >"$AGENT_LOG"
+            JEV_MODE=shadow "$wrap" probe -- --hi
+            grep -q 'omapi-loop-stop-policy@1' "$AGENT_LOG"
+            if grep -F '$schema' "$AGENT_LOG" >/dev/null; then
+              echo "agent catalog must stay tiny" >&2
+              exit 1
+            fi
+
+            export AGENT_LOG="$work/bypass.log"
+            : >"$AGENT_LOG"
+            JEV_BYPASS=1 "$wrap" probe -- --hi
+            grep -q 'omapi-route-workflow-policy@1' "$AGENT_LOG"
+            if grep -F '$schema' "$AGENT_LOG" >/dev/null; then
+              echo "bypass catalog must stay tiny" >&2
+              exit 1
+            fi
+
             echo ok >"$out"
           '';
         }

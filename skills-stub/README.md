@@ -1,7 +1,8 @@
 # skills-stub (bootstrap placeholder)
 
-`github:VirtualMachinist/omahedron-skills` is not public yet (404). This
-directory is the **sole skills source of truth** for the overlay flake via:
+This directory is the skills input for the overlay flake until you point
+`inputs.skills` at your own skills repo. `github:VirtualMachinist/omahedron-skills`
+is not public yet, so the flake uses this path:
 
 ```nix
 inputs.skills.url = "path:./skills-stub";

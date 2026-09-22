@@ -38,9 +38,9 @@ missing-key shadow path is the correct one (`missingKey: true`, not an active
 deny from this catalog). A deterministic write deny is still recorded
 (`codeDeny: true`) and still does not block while the key is absent.
 
-## Flip after Marci re-COMPAT
+## Turn on permission mode after a re-check
 
-Do not honor this surface until Marci re-COMPATs it. After that:
+Do not honor this surface until it has been re-checked. After that:
 
 ```sh
 export JEV_PERMISSION_MODE=active
@@ -61,7 +61,7 @@ When it is honoring:
 
 ```sh
 export JEV_MODE=shadow
-# export JEV_PERMISSION_MODE=shadow   # default; leave it until Marci re-COMPATs
+# export JEV_PERMISSION_MODE=shadow   # default; leave it until this surface is re-checked
 # export TYPESAFE_API_KEY=…           # omit: permission stays shadow
 
 jev-router --tool-name run_terminal_command --tool-input "npm test" --intent "run tests"

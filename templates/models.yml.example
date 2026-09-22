@@ -1,7 +1,7 @@
 # Example writer routing for the omapi overlay.
 # No API keys, tokens, or card material belong in this file.
-# Cursor / omp auth stays on the host. TYPESAFE_API_KEY is a runtime export
-# (card store), never a flake attr or a committed yaml field.
+# Harness auth stays on the host. TYPESAFE_API_KEY is a runtime export,
+# never a flake attr or a committed yaml field.
 
 writers:
   default: cursor
@@ -10,5 +10,5 @@ writers:
 
 jev:
   mode: shadow
-  # Flip to active is out of scope for this overlay GOAL.
+  # Leave mode at shadow in this file.
   # bypass: set JEV_BYPASS=1 in the process environment, not here.

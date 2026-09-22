@@ -10,8 +10,6 @@ if [ "${OMAPI_PLANES:-0}" != "1" ]; then
   exit 0
 fi
 
-echo "omapi-planes-shim: PLANES filter on (pre-exec; overlay=${OMAPI_OVERLAY:-})" >&2
-
 # Fail closed on an explicit hold from a caller-supplied planes verdict file.
 # The path is caller-owned; we never read home for keys.
 if [ -n "${OMAPI_PLANES_VERDICT:-}" ]; then

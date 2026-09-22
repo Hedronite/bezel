@@ -140,7 +140,7 @@ export function pretoolHookDecision(verdict = {}) {
 
 /**
  * Grok Build PreToolUse tool class → existing omapi policyId / Choice family.
- * One map for castle (~/.grok/hooks/jev-omapi.json) and this router.
+ * One map for the Grok hook (~/.grok/hooks/jev-omapi.json) and this router.
  * Not a new policy and not a second TypeSafe client.
  * Permission catalogs wrap these ids (packages/jev-router/permission.mjs).
  *

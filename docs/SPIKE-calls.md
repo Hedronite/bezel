@@ -41,7 +41,7 @@ not block. `JEV_MODE=active` does not flip this surface.
 
 Key absent forces shadow, including when the operator asked for active.
 
-Castle Grok hooks leave MCP on ask until this surface is merged. After
+Grok hooks leave MCP on ask until this surface is merged. After
 merge, MCP stays ask until the flip below. Do not put the variable in the
 hook JSON or the flake.
 

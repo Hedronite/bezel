@@ -1,9 +1,9 @@
-# SPIKE — loop-stop / escalate (Suraj #4 + #10)
+# Loop-stop and escalate
 
-Give `jev-router` a **continue / stop / escalate** Choice over intent plus an
-optional step / trajectory digest, and honor it in `cursor-agent-jev`.
+Give `jev-router` a **continue / stop / escalate** decision over intent plus an
+optional step digest, and honor it in `cursor-agent-jev`.
 **Do not** vendor [stanley-code](https://github.com/devagrawal09/stanley-code),
-call Pi, or auto-promote a candidate.
+call another agent binary, or auto-promote a candidate.
 
 Jev classifies; **code** applies `omapi-loop-stop-policy@1`. Escalate is
 human-in-the-loop (`choice: escalate`, `gate: hold`) — not an auto-retry.
@@ -101,6 +101,6 @@ shadow/active exec rules. `TYPESAFE_API_KEY` is env-only.
 
 ## Out of scope (hard no)
 
-Pi fallback · Stanley CLI/npm · improve-worker · `--promote-candidate` ·
+another agent binary · stanley-code CLI/npm · improve-worker · `--promote-candidate` ·
 full trajectory LLM verify · UI action choice · product-native Lapis/Facet
 gates · baking `TYPESAFE_API_KEY` into the flake.

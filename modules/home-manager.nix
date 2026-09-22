@@ -14,13 +14,13 @@ let
 in
 {
   options.programs.omapi = {
-    enable = lib.mkEnableOption "harness-agnostic overlay (skills input, Jev gates, optional omp wrap)";
+    enable = lib.mkEnableOption "omapi overlay (skills, Jev gates, and a harness wrap)";
 
     package = lib.mkOption {
       type = lib.types.package;
       default = pkgs.omapi or (throw "programs.omapi: pkgs.omapi missing — add the omapi-overlay overlay");
       defaultText = lib.literalExpression "pkgs.omapi";
-      description = "omapi wrap package (thin wrap of stock omp).";
+      description = "omapi package. Runs a host omp binary.";
     };
 
     extraPackages = lib.mkOption {
@@ -39,8 +39,7 @@ in
       defaultText = lib.literalExpression "inputs.skills";
       description = ''
         Sole skills source of truth: the flake `inputs.skills` store path.
-        Home Manager symlinks this path to ~/.config/omp/agent/skills for the omp harness.
-        Other harnesses consume `inputs.skills` directly.
+        Home Manager only symlinks this path to ~/.config/omp/agent/skills.
         Do not point this at a second in-repo skills/ copy.
       '';
     };

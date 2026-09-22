@@ -7,7 +7,7 @@
   jevRouter ? null,
 }:
 
-# Thin wrap: stock omp (or fail-closed runtime resolver) → $out/bin/omapi.
+# Thin wrap: host omp binary (or fail-closed runtime resolver) → $out/bin/omapi.
 # Real makeWrapper — not a comment-only stub (Jupi r1 → r2).
 #
 # Contract:
@@ -46,7 +46,7 @@ stdenvNoCC.mkDerivation {
   '';
 
   meta = {
-    description = "Thin wrap of a host or pinned omp binary (optional engine path)";
+    description = "Runs a host omp binary with Jev tools on PATH";
     homepage = "https://github.com/VirtualMachinist/omapi-overlay";
     mainProgram = "omapi";
     license = lib.licenses.mit;

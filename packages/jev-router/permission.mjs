@@ -14,7 +14,7 @@
  * selects a read tool (JEV_TYPED_CALL_MODE=active).
  *
  * JEV_PERMISSION_MODE defaults to shadow. `active` honors this surface only
- * after Marci re-COMPAT, and only when TYPESAFE_API_KEY is set.
+ * after this surface is re-checked, and only when TYPESAFE_API_KEY is set.
  * Key absent forces shadow. JEV_MODE does not flip this surface.
  * Code deny wins over a model allow. Nothing here emits decision "allow".
  */

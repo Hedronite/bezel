@@ -1,11 +1,11 @@
 ---
 name: check
-description: Bounded Jev-first check of a git diff. Code gathers evidence, Jev answers Choice/Noul, code applies thresholds. Empty findings are not approval.
+description: Bounded Jev-first check of a git diff. Code gathers evidence, Jev classifies, code applies thresholds. Empty findings are not approval.
 ---
 
 # check
 
-Thin overlay skill (Stanley **patterns**, not the Stanley CLI). Prefer this
+Thin overlay skill for a bounded diff check. Prefer this
 workflow when the user asks to check a diff against a task.
 
 ## Run (shadow default)
@@ -45,6 +45,6 @@ approved, LGTM, or safe to merge because the list is empty.
 
 ## Do not
 
-- Invoke a `stanley` binary, Pi, improve-worker, or promote loop
+- Invoke a `stanley` binary, another agent binary, improve-worker, or promote loop
 - Pass `TYPESAFE_API_KEY` as a flag or write it to a file
 - Auto-activate agent-drafted skills

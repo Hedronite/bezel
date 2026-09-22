@@ -1,8 +1,7 @@
 # Bezel on Grok Build
 
-`grok-build-bezel` is the PreToolUse adapter for the controls already in
-`bezel-jev`. Grok Build calls the adapter. The adapter calls `bezel-jev`
-(`jev-router` is the same program).
+`grok-build-jev` is the PreToolUse adapter for the controls already in
+`jev-router`. Grok Build calls the adapter. The adapter calls `jev-router`.
 Policy ids, the class map, permission catalogs, the tiny tool index, and
 FACET calls stay in those modules. This process does not construct a
 TypeSafe client and does not copy `PRETOOL_CLASSES`.
@@ -12,7 +11,7 @@ config. `config` prints a hook document an operator can review.
 
 ## Launch
 
-`grok-build-bezel` does not print a banner on stdout or stderr. `catalog`,
+`grok-build-jev` does not print a banner on stdout or stderr. `catalog`,
 `config`, `smoke`, and `hook` write their JSON. `hook` also writes one
 decision line on stderr. There is no banner to hide, and no TTY gate.
 
@@ -20,10 +19,10 @@ decision line on stderr. There is no banner to hide, and no TTY gate.
 
 | Piece | Role |
 | --- | --- |
-| `grok-build-bezel hook` | Read the PreToolUse event. Spawn `bezel-jev`. Map the GateVerdict with `pretoolHookDecision`. |
-| `bezel-jev` | The only TypeSafe client. Stamps `pretool.policyId`, permission, catalog, and `calls`. |
-| `grok-build-bezel catalog` / `schema` | Tiny index, then one schema on demand. A schema dump is not a typed call and not an allow. |
-| `grok-build-bezel config` | One `PreToolUse` group. `matcher` is `PRETOOL_MATCHER`. |
+| `grok-build-jev hook` | Read the PreToolUse event. Spawn `jev-router`. Map the GateVerdict with `pretoolHookDecision`. |
+| `jev-router` | The only TypeSafe client. Stamps `pretool.policyId`, permission, catalog, and `calls`. |
+| `grok-build-jev catalog` / `schema` | Tiny index, then one schema on demand. A schema dump is not a typed call and not an allow. |
+| `grok-build-jev config` | One `PreToolUse` group. `matcher` is `PRETOOL_MATCHER`. |
 
 `hook` writes `{ "decision": "defer" }` or `{ "decision": "deny" }`. It never
 writes `allow`. Defer leaves Grok's own permission flow in place. Deny exits 2.
@@ -84,8 +83,8 @@ node packages/jev-router/harness.mjs smoke
 From a built package:
 
 ```sh
-nix build .#grok-build-bezel
-./result/bin/grok-build-bezel smoke
+nix build .#grok-build-jev
+./result/bin/grok-build-jev smoke
 ```
 
 The report checks four things: a `Bash` PreToolUse event maps to the shell
@@ -99,10 +98,10 @@ hold. The report contains no `decision: allow`.
 ## Config
 
 ```sh
-grok-build-bezel config
+grok-build-jev config
 ```
 
-Point the command at `grok-build-bezel hook` on `PATH`. Pass the command body
+Point the command at `grok-build-jev hook` on `PATH`. Pass the command body
 or write path through the event's `toolInput` (`command` or `path`). For MCP,
 set `JEV_TOOLS_FILE` to an operator catalog (see
 [SPIKE-calls.md](SPIKE-calls.md)). Do not put the API key in the hook JSON.

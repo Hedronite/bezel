@@ -1,4 +1,4 @@
-# Bezel shadow diff check (`bezel-jev --check`)
+# Bezel shadow diff check (`jev-router --check`)
 
 Bounded check: code gathers evidence, Jev classifies, code applies thresholds.
 **Do not** vendor
@@ -16,7 +16,7 @@ findings are not approval.
 export JEV_MODE=shadow          # default; log only, never blocks
 # export TYPESAFE_API_KEY=…    # host card store only; omit to continue unclassified
 
-bezel-jev --check --intent "describe the change under test"
+jev-router --check --intent "describe the change under test"
 # optional:
 #   --base origin/main
 #   --repo /path/to/repo
@@ -26,8 +26,8 @@ bezel-jev --check --intent "describe the change under test"
 Nix:
 
 ```sh
-nix build .#bezel-jev
-./result/bin/bezel-jev --check --intent probe \
+nix build .#jev-router
+./result/bin/jev-router --check --intent probe \
   --diff-file packages/jev-router/testdata/skip-marker.diff
 ```
 
@@ -35,7 +35,7 @@ Skill (Home Manager skills input): `skills-stub/check/SKILL.md`.
 
 ## What you get
 
-One JSON line on stdout. Stderr is `[bezel-jev] …` logs.
+One JSON line on stdout. Stderr is `[jev-router] …` logs.
 
 ```json
 {
@@ -55,7 +55,7 @@ No key + shadow: deterministic pre-pass still runs (`it.skip`, removed
 
 ## Router shadow workflow Choice
 
-Without `--check`, `bezel-jev "<intent>"` still does the writer-lane Choice.
+Without `--check`, `jev-router "<intent>"` still does the writer-lane Choice.
 In shadow it also:
 
 1. Gathers facts (`diffPresent?`)

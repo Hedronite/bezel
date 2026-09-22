@@ -57,7 +57,7 @@ export function honors(modes) {
   return modes.jevMode === "active" || modes.permissionMode === "active" || modes.typedCallMode === "active";
 }
 
-export function harnessConfig({ command = "grok-build-bezel hook" } = {}) {
+export function harnessConfig({ command = "grok-build-jev hook" } = {}) {
   return {
     hooks: {
       PreToolUse: [
@@ -523,7 +523,7 @@ function emitDecision(result) {
   const cls = stamp && stamp.class ? stamp.class : "-";
   const policy = stamp && stamp.policyId ? stamp.policyId : "-";
   process.stderr.write(
-    `[grok-build-bezel] class=${cls} policy=${policy} decision=${result.decision} reason=${result.reason}\n`,
+    `[grok-build-jev] class=${cls} policy=${policy} decision=${result.decision} reason=${result.reason}\n`,
   );
   process.stdout.write(`${JSON.stringify({ decision: result.decision, reason: result.reason })}\n`);
   process.exit(result.exitCode);
@@ -532,7 +532,7 @@ function emitDecision(result) {
 function main() {
   const cmd = process.argv[2] || "hook";
   if (cmd === "--help" || cmd === "-h" || cmd === "help") {
-    process.stderr.write("grok-build-bezel hook|catalog|schema NAME|config|smoke\n");
+    process.stderr.write("grok-build-jev hook|catalog|schema NAME|config|smoke\n");
     process.exit(0);
   }
   if (cmd === "smoke") {
@@ -540,7 +540,7 @@ function main() {
       process.stdout.write(`${JSON.stringify(runSmoke())}\n`);
       process.exit(0);
     } catch (err) {
-      process.stderr.write(`[grok-build-bezel] smoke failed: ${err && err.message ? err.message : err}\n`);
+      process.stderr.write(`[grok-build-jev] smoke failed: ${err && err.message ? err.message : err}\n`);
       process.exit(2);
     }
   }
@@ -563,7 +563,7 @@ function main() {
     process.exit(0);
   }
   if (cmd !== "hook") {
-    process.stderr.write(`[grok-build-bezel] unknown command ${cmd}\n`);
+    process.stderr.write(`[grok-build-jev] unknown command ${cmd}\n`);
     process.exit(2);
   }
   emitDecision(runHook(readFileSync(0, "utf8"), process.env));

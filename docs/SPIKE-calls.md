@@ -5,7 +5,7 @@ catalog, closed-set arguments, then code picks **best** and **top-X**. The
 result rides on the existing GateVerdict as `calls`. Transport is a FACET
 v2.1.3 `tool_call`. This process does not call the tool.
 
-Same TypeSafe client as the rest of `bezel-jev`. Same policy id as
+Same TypeSafe client as the rest of `jev-router`. Same policy id as
 route-workflow (`omapi-route-workflow-policy@1`). No new policyId. The API
 key stays in the environment and is scrubbed out of catalog state.
 

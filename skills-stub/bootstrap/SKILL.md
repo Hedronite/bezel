@@ -6,7 +6,7 @@ description: Placeholder skill shipped with the Bezel skills-stub until a skills
 # bootstrap
 
 This skill exists so the skills flake input is a valid skills directory
-(`*/SKILL.md`) while `omahedron-skills` is unpublished.
+(`*/SKILL.md`) until you point the flake skills input at a skills repository.
 
 Home Manager installs the input at `~/.config/omp/agent/skills`, the directory
 the wrapped harness loads.

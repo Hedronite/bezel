@@ -83,11 +83,11 @@ jobs:
           for sys in aarch64-darwin x86_64-darwin aarch64-linux x86_64-linux; do
             echo "== eval packages.$sys =="
             test "$(nix eval --raw ".#packages.$sys.bezel.pname")" = bezel
+            test "$(nix eval --raw ".#packages.$sys.bezel.meta.mainProgram")" = bezel-omp
             test "$(nix eval --raw ".#packages.$sys.omapi.pname")" = bezel
-            test "$(nix eval --raw ".#packages.$sys.bezel-jev.pname")" = bezel-jev
-            test "$(nix eval --raw ".#packages.$sys.jev-router.pname")" = bezel-jev
-            test "$(nix eval --raw ".#packages.$sys.cursor-agent-bezel.name")" = cursor-agent-bezel
-            test "$(nix eval --raw ".#packages.$sys.grok-build-bezel.name")" = grok-build-bezel
+            test "$(nix eval --raw ".#packages.$sys.jev-router.pname")" = jev-router
+            test "$(nix eval --raw ".#packages.$sys.cursor-agent-jev.name")" = cursor-agent-jev
+            test "$(nix eval --raw ".#packages.$sys.grok-build-jev.name")" = grok-build-jev
             nix eval --json ".#packages.$sys.omp-pin.meta.platforms"
           done
 
@@ -98,15 +98,13 @@ jobs:
       - name: build overlay packages (skip 180–240MB pin)
         if: ${{ !matrix.skip }}
         run: |
-          mapfile -t outs < <(nix build -L --no-link --print-out-paths .#bezel .#bezel-jev .#cursor-agent-bezel .#grok-build-bezel)
+          mapfile -t outs < <(nix build -L --no-link --print-out-paths .#bezel .#jev-router .#cursor-agent-jev .#grok-build-jev)
           test "${#outs[@]}" -eq 4
-          test -x "${outs[0]}/bin/bezel"
+          test -x "${outs[0]}/bin/bezel-omp"
           test -x "${outs[0]}/bin/omapi"
-          test -x "${outs[1]}/bin/bezel-jev"
+          test ! -e "${outs[0]}/bin/bezel"
           test -x "${outs[1]}/bin/jev-router"
-          test -x "${outs[2]}/bin/cursor-agent-bezel"
           test -x "${outs[2]}/bin/cursor-agent-jev"
-          test -x "${outs[3]}/bin/grok-build-bezel"
           test -x "${outs[3]}/bin/grok-build-jev"
           echo "bezel-pinned fetchurl skipped on GHA (build_bezel_pin=${{ matrix.build_bezel_pin }}; 180–240MB). Pin hashes are in packages/omp-pin.nix."
 

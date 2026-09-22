@@ -784,11 +784,10 @@ const cases = [
   }),
 
   test("wrap script does not flip permission catalogs or bake a key", () => {
-    const wrapPath = [
-      join(here, "cursor-agent-bezel.nix"),
-      join(here, "..", "cursor-agent-bezel.nix"),
-    ].find((path) => existsSync(path));
-    assert.ok(wrapPath, "cursor-agent-bezel.nix missing");
+    const wrapPath = [join(here, "cursor-agent-jev.nix"), join(here, "..", "cursor-agent-jev.nix")].find((path) =>
+      existsSync(path),
+    );
+    assert.ok(wrapPath, "cursor-agent-jev.nix missing");
     const wrap = readFileSync(wrapPath, "utf8");
     assert.equal(wrap.includes("JEV_PERMISSION_MODE"), false);
     assert.equal(wrap.includes("--schema"), true);
@@ -798,7 +797,6 @@ const cases = [
     assert.equal(wrap.includes("shadow Choice logged"), false);
     assert.equal(wrap.includes("JEV_BYPASS — skipping"), false);
     assert.equal(wrap.includes("cursor-agent-jev: verdict"), false);
-    assert.equal(wrap.includes("cursor-agent-bezel: verdict"), false);
     assert.equal(wrap.includes("stop/escalate do not exec"), true);
   }),
 
@@ -835,7 +833,6 @@ const cases = [
       assert.equal(result.stdout.endsWith("\n"), true, result.stdout);
       const body = result.stdout.slice(0, -1);
       assert.equal(body.includes("\n"), false, result.stdout);
-      assert.equal(body.includes("[bezel-jev]"), false);
       assert.equal(body.includes("[jev-router]"), false);
       assert.equal(body.includes("PLANES filter on"), false);
       return JSON.parse(body);
@@ -856,7 +853,6 @@ const cases = [
     const verdict = oneJson(shadow);
     assert.equal(verdict.missingKey, true);
     assert.equal(verdict.blocked, false);
-    assert.equal(shadow.stdout.includes("[bezel-jev]"), false);
     assert.equal(shadow.stdout.includes("[jev-router]"), false);
   }),
 

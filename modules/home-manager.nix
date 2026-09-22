@@ -8,7 +8,7 @@
 
 # Skills flake input is the sole SoT. This module only symlinks that store
 # path. Do not vendor a second skills/ tree in Bezel.
-# `programs.omapi` is a renamed option for `programs.bezel` (one transition).
+# `programs.omapi` is deprecated. It renames to `programs.bezel`.
 
 {
   imports = [
@@ -22,17 +22,17 @@
       type = lib.types.package;
       default = pkgs.bezel or (throw "programs.bezel: pkgs.bezel missing — import the Bezel overlay");
       defaultText = lib.literalExpression "pkgs.bezel";
-      description = "Bezel package. Runs upstream omp.";
+      description = "Bezel package. The omp engine command is bezel-omp. omapi is a symlink for one release.";
     };
 
     extraPackages = lib.mkOption {
       type = lib.types.listOf lib.types.package;
       default =
-        lib.optional (pkgs ? bezel-jev) pkgs.bezel-jev
-        ++ lib.optional (pkgs ? cursor-agent-bezel) pkgs.cursor-agent-bezel
-        ++ lib.optional (pkgs ? grok-build-bezel) pkgs.grok-build-bezel;
-      defaultText = lib.literalExpression "[ pkgs.bezel-jev pkgs.cursor-agent-bezel pkgs.grok-build-bezel ]";
-      description = "Additional Bezel packages on PATH (router, Cursor adapter, Grok Build adapter).";
+        lib.optional (pkgs ? jev-router) pkgs.jev-router
+        ++ lib.optional (pkgs ? cursor-agent-jev) pkgs.cursor-agent-jev
+        ++ lib.optional (pkgs ? grok-build-jev) pkgs.grok-build-jev;
+      defaultText = lib.literalExpression "[ pkgs.jev-router pkgs.cursor-agent-jev pkgs.grok-build-jev ]";
+      description = "Additional Bezel packages on PATH (jev-router, cursor-agent-jev, grok-build-jev).";
     };
 
     skillsSource = lib.mkOption {

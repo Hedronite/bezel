@@ -38,7 +38,7 @@ export const LOOP_STOP_LABELS = ["continue", "stop", "escalate"];
 export const CHECK_KIND_LABELS = ["none", "test_safety", "task_mismatch", "cannot_tell"];
 
 /**
- * JEV_BYPASS kill switch. Same spelling as packages/cursor-agent-bezel.nix:
+ * JEV_BYPASS kill switch. Same spelling as packages/cursor-agent-jev.nix:
  * only "1" or "true". Anything else (unset, "0", "false", "yes") is not a bypass.
  * The wrap then execs cursor-agent. The Grok hook must defer, not emit allow.
  */
@@ -139,9 +139,8 @@ export function pretoolHookDecision(verdict = {}) {
 }
 
 /**
- * Grok Build PreToolUse tool class → existing policyId / Choice family.
+ * Grok Build PreToolUse tool class → existing omapi policyId / Choice family.
  * One map for the Grok hook (~/.grok/hooks/jev-omapi.json) and this router.
- * The version strings stay omapi-*-policy@1. They are the gate contract, not the product name.
  * Not a new policy and not a second TypeSafe client.
  * Permission catalogs wrap these ids (packages/jev-router/permission.mjs).
  *

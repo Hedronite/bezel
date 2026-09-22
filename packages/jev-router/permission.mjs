@@ -10,8 +10,9 @@
  * A new Choice catalog exists only for shell: the command body is not a
  * loop-stop label. Write wraps the check writer. MCP wraps route-workflow.
  * Typed Calls (calls.mjs) are that same policy id, not a new one. A workflow
- * pick is still not permission. MCP stays ask until a honoring typed call
- * selects a read tool (JEV_TYPED_CALL_MODE=active).
+ * pick is still not permission. While typed-call mode is unset, a read-shaped
+ * MCP call follows loop-stop. A mutating MCP call stays ask. A honoring typed
+ * call (JEV_TYPED_CALL_MODE=active) is the permission surface for that read.
  *
  * JEV_PERMISSION_MODE defaults to shadow. `active` honors this surface only
  * after this surface is re-checked, and only when TYPESAFE_API_KEY is set.
@@ -66,7 +67,7 @@ export const PERMISSION_SURFACES = [
     parent: "route-workflow",
     catalog: "route-workflow",
     newCatalog: false,
-    contentGap: "workflow pick is not a tool call; typed calls stay ask until honored",
+    contentGap: "a read follows loop-stop until typed-call mode is the permission; a mutating call stays ask",
   },
 ];
 
@@ -137,6 +138,43 @@ export function collectWriteFlags({ diffText = "", path = "" } = {}) {
   return [...flags];
 }
 
+function holdQuestion(reason, choice) {
+  switch (reason) {
+    case "secret_path":
+      return "Is this secret path intentional?";
+    case "skip_marker_added":
+      return "Should this test stay skipped?";
+    case "assertions_removed":
+      return "Should these assertions be removed?";
+    case "test_file_deleted":
+      return "Should this test file be deleted?";
+    case "empty_findings_not_approval":
+      return "Is this write in scope to continue?";
+    case "no_content":
+      return "What command should run?";
+    case "missing_key":
+      return "Is the judge available for this action?";
+    default:
+      if (choice === "stop") return "Should this action stop?";
+      return "Should a human review this before it continues?";
+  }
+}
+
+/** Human hold suffix. The machine `reason` stays the flag or code. */
+export function holdSuffix({ reason = "", choice = "" } = {}) {
+  const detail = String(reason || choice || "hold").replace(/[\r\n=]/g, "_");
+  return `detail=${detail} question=${holdQuestion(reason, choice)}`;
+}
+
+function holdOn(row) {
+  const held = row.gate === "hold" || row.choice === "stop" || row.choice === "escalate";
+  if (!held) return row;
+  const hold = holdSuffix({ reason: row.reason, choice: row.choice });
+  const detail = hold.slice("detail=".length, hold.indexOf(" question="));
+  const question = hold.slice(hold.indexOf("question=") + "question=".length);
+  return { ...row, detail, question, hold };
+}
+
 function pack(surface, mode, fields) {
   const honor = mode === "active";
   let mapped = fields.mapped ?? null;
@@ -169,7 +207,7 @@ function pack(surface, mode, fields) {
     }
   }
 
-  return {
+  return holdOn({
     surface: surface.id,
     policyId: surface.policyId,
     parent: surface.parent,
@@ -191,7 +229,7 @@ function pack(surface, mode, fields) {
     skipped: fields.skipped === true,
     missingKey: fields.missingKey === true,
     autoAllow: false,
-  };
+  });
 }
 
 function parentProbabilities(probabilities) {
@@ -252,7 +290,12 @@ function shellFromLabel(surface, mode, { label, confidence, probabilities, conte
   });
 }
 
-function writeFromFlags(surface, mode, { flags, modelLabel }) {
+/** A missing or non-numeric concern is not under the park bar. */
+function concernUnderPark(concern) {
+  return typeof concern === "number" && Number.isFinite(concern) && concern < CHECK_POLICY.concernPark;
+}
+
+function writeFromFlags(surface, mode, { flags, modelLabel, concern }) {
   const denyFlag = WRITE_CODE_DENY_FLAGS.find((flag) => flags.includes(flag)) || null;
   if (denyFlag) {
     return pack(surface, mode, {
@@ -261,6 +304,15 @@ function writeFromFlags(surface, mode, { flags, modelLabel }) {
       modelLabel: modelLabel ?? null,
       reason: denyFlag,
       codeDeny: true,
+    });
+  }
+  if (concernUnderPark(concern)) {
+    return pack(surface, mode, {
+      mapped: "continue",
+      label: "allow",
+      modelLabel: modelLabel ?? null,
+      reason: "below_park",
+      codeDeny: false,
     });
   }
   return pack(surface, mode, {
@@ -272,15 +324,60 @@ function writeFromFlags(surface, mode, { flags, modelLabel }) {
   });
 }
 
-function mcpFromRoute(surface, mode, { routingOutcome, typed }) {
+const MCP_READ_NAME = /(?:^|__)(?:search|list|get|read|fetch|find)(?:__|_|$)/i;
+const MCP_MUTATE_NAME = /(?:^|__)(?:save|create|update|delete|write|set|remove|send|add|put|post)(?:__|_|$)/i;
+
+function mcpToolName(toolName, typed) {
+  if (toolName) return String(toolName);
+  if (typed && typed.best && typed.best.name) return String(typed.best.name);
+  return "";
+}
+
+function mcpEffect(effect, typed) {
+  if (effect) return String(effect).toLowerCase();
+  if (typed && typed.best && typed.best.effect) return String(typed.best.effect).toLowerCase();
+  return "";
+}
+
+/** read, mutate, or unknown. Effect wins over the name. lapis__search is a read. */
+function mcpKind({ toolName = "", effect = "", typed = null } = {}) {
+  const name = mcpToolName(toolName, typed);
+  const eff = mcpEffect(effect, typed);
+  if (eff === "read") return "read";
+  if (eff && eff !== "read") return "mutate";
+  if (MCP_READ_NAME.test(name)) return "read";
+  if (MCP_MUTATE_NAME.test(name)) return "mutate";
+  return "unknown";
+}
+
+function mcpFromRoute(surface, mode, { routingOutcome, typed, toolName, effect, label, confidence, probabilities }) {
   if (typed && typed.honor === true && typed.policyId === surface.policyId && typed.transport === "facet") {
     const mapped = typed.mapped === "continue" || typed.mapped === "stop" ? typed.mapped : "escalate";
-    const label = mapped === "continue" ? "allow" : mapped === "stop" ? "deny" : "ask";
+    const picked = mapped === "continue" ? "allow" : mapped === "stop" ? "deny" : "ask";
     return pack(surface, mode, {
       mapped,
-      label,
+      label: picked,
+      modelLabel: label ?? null,
       reason: typed.reason || "typed_call",
       codeDeny: typed.codeDeny === true,
+    });
+  }
+  const kind = mcpKind({ toolName, effect, typed });
+  if (kind === "mutate") {
+    return pack(surface, mode, {
+      mapped: "escalate",
+      label: "ask",
+      modelLabel: label ?? null,
+      reason: "mutating_mcp",
+      codeDeny: false,
+    });
+  }
+  if (kind === "read") {
+    return shellFromLabel(surface, mode, {
+      label,
+      confidence,
+      probabilities,
+      contentPresent: true,
     });
   }
   const outcome = routingOutcome ? String(routingOutcome) : "";
@@ -288,6 +385,7 @@ function mcpFromRoute(surface, mode, { routingOutcome, typed }) {
   return pack(surface, mode, {
     mapped: "escalate",
     label: "ask",
+    modelLabel: label ?? null,
     reason: named ? "workflow_is_not_permission" : "cannot_tell",
     codeDeny: false,
   });
@@ -309,8 +407,11 @@ export function decidePermission({
   diffText = "",
   path = "",
   flags = null,
+  concern = null,
   routingOutcome = null,
   typed = null,
+  toolName = "",
+  effect = "",
   failed = false,
 } = {}) {
   const surface = permissionSurface(classId);
@@ -356,9 +457,17 @@ export function decidePermission({
     return shellFromLabel(surface, mode, { label, confidence, probabilities, contentPresent });
   }
   if (surface.id === "write") {
-    return writeFromFlags(surface, mode, { flags: writeFlags, modelLabel: label });
+    return writeFromFlags(surface, mode, { flags: writeFlags, modelLabel: label, concern });
   }
-  return mcpFromRoute(surface, mode, { routingOutcome, typed });
+  return mcpFromRoute(surface, mode, {
+    routingOutcome,
+    typed,
+    toolName,
+    effect,
+    label,
+    confidence,
+    probabilities,
+  });
 }
 
 export function permissionBypass(classId) {

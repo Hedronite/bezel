@@ -31,7 +31,15 @@ import {
 } from "./catalog.mjs";
 import { runCheck } from "./check.mjs";
 import { decideHook, harnessConfig, harnessModes, parseHookEvent, runSmoke } from "./harness.mjs";
-import { availableCapabilities, diffPresent, gatherDiff, gatherFacts } from "./facts.mjs";
+import {
+  availableCapabilities,
+  clipToMaxHunkChars,
+  diffPresent,
+  gatherDiff,
+  gatherFacts,
+  parseWriteToolWire,
+  writeToolWire,
+} from "./facts.mjs";
 import { clipDigest, decideLoopStop, missingKeyLoop, shouldExecAgent } from "./loop-stop.mjs";
 import {
   applyPermissionVerdict,
@@ -204,6 +212,200 @@ const cases = [
     assert.equal(report.approval, false);
     assert.ok(report.notChecked.some((row) => /no git diff/.test(row)));
     assert.equal(report.findings.length, 0);
+  }),
+
+  test("proposed write edit clips to maxHunkChars and is the permission diff", () => {
+    assert.equal(CHECK_POLICY.maxHunkChars, 4000);
+    assert.equal(clipToMaxHunkChars("abc", 2), "ab");
+    const body = `it.skip("keeps the marker", () => {\n  expect(1).toBe(1);\n});\n${"Z".repeat(5000)}`;
+    const wire = writeToolWire({
+      file_path: "src/math.test.js",
+      old_string: 'it("adds", () => {\n  expect(1).toBe(1);\n});',
+      new_string: body,
+    });
+    const parsed = parseWriteToolWire(wire);
+    assert.equal(parsed.path, "src/math.test.js");
+    assert.equal(parsed.diffText.length, 4000);
+    assert.ok(parsed.diffText.includes("+it.skip"));
+    assert.equal(parsed.diffText.includes("Z".repeat(4000)), false);
+    const flagged = decidePermission({
+      classId: "write",
+      requestedMode: "active",
+      hasKey: true,
+      diffText: parsed.diffText,
+      path: parsed.path,
+    });
+    assert.equal(flagged.reason, "skip_marker_added");
+    assert.equal(flagged.codeDeny, true);
+    assert.equal(flagged.autoAllow, false);
+
+    const created = parseWriteToolWire(writeToolWire({ path: "notes/a.md", contents: "hello\n" }));
+    assert.equal(created.path, "notes/a.md");
+    assert.match(created.diffText, /\+hello/);
+    const multi = parseWriteToolWire(
+      writeToolWire({
+        path: "src/a.test.js",
+        edits: [{ old_string: "expect(1)", new_string: "expect(2)" }],
+      }),
+    );
+    assert.match(multi.diffText, /-expect\(1\)/);
+    assert.match(multi.diffText, /\+expect\(2\)/);
+
+    const pathOnly = parseWriteToolWire("src/app.js");
+    assert.equal(pathOnly.path, "src/app.js");
+    assert.equal(pathOnly.diffText, "");
+    const emptyWrite = decidePermission({
+      classId: "write",
+      requestedMode: "active",
+      hasKey: true,
+      diffText: pathOnly.diffText,
+      path: pathOnly.path,
+    });
+    assert.equal(emptyWrite.reason, "empty_findings_not_approval");
+    assert.equal(emptyWrite.codeDeny, false);
+
+    const secret = parseWriteToolWire(".env");
+    const denied = decidePermission({
+      classId: "write",
+      requestedMode: "shadow",
+      hasKey: false,
+      diffText: secret.diffText,
+      path: secret.path,
+    });
+    assert.equal(denied.reason, "secret_path");
+    assert.equal(denied.codeDeny, true);
+
+    const over = parseWriteToolWire(JSON.stringify({ path: "a.md", proposed: "Q".repeat(5000) }));
+    assert.equal(over.path, "a.md");
+    assert.equal(over.diffText, "Q".repeat(4000));
+  }),
+
+  test("write hook forwards the proposed edit clipped to 4000, not the path alone", () => {
+    const dir = mkdtempSync(join(tmpdir(), "jev-g1-hook-"));
+    const script = join(dir, "router.mjs");
+    const router = join(dir, "router");
+    const argvLog = join(dir, "argv.json");
+    const secret = "typesafe-test-key";
+    const shQuote = (value) => `'${String(value).replaceAll("'", `'\\''`)}'`;
+    writeFileSync(
+      script,
+      `import { writeFileSync } from "node:fs";
+writeFileSync(process.env.HARNESS_ARGV_LOG, JSON.stringify(process.argv.slice(2)));
+process.stdout.write('{"ok":true,"mode":"shadow","choice":"continue","gate":"auto","blocked":false,"exec":true,"bypass":false}\\n');
+`,
+    );
+    writeFileSync(
+      router,
+      `#!/bin/sh
+exec ${shQuote(process.execPath)} ${shQuote(script)} "$@"
+`,
+    );
+    chmodSync(router, 0o755);
+    const event = JSON.stringify({
+      tool_name: "search_replace",
+      tool_input: {
+        file_path: "notes/a.md",
+        old_string: "old",
+        new_string: `${secret}\n${"Z".repeat(5000)}`,
+      },
+    });
+    const hook = spawnSync(process.execPath, [join(here, "harness.mjs"), "hook"], {
+      input: event,
+      env: {
+        ...process.env,
+        JEV_ROUTER: router,
+        JEV_BYPASS: "",
+        JEV_MODE: "shadow",
+        JEV_PERMISSION_MODE: "",
+        JEV_TYPED_CALL_MODE: "",
+        TYPESAFE_API_KEY: secret,
+        HARNESS_ARGV_LOG: argvLog,
+      },
+      encoding: "utf8",
+    });
+    if (!existsSync(argvLog)) {
+      const spawnError = hook.error && hook.error.message ? hook.error.message : hook.error || "";
+      assert.fail(
+        `stub router did not write ${argvLog}\nstatus=${hook.status}\nerror=${spawnError}\nstderr=${hook.stderr || ""}\nstdout=${hook.stdout || ""}`,
+      );
+    }
+    assert.equal(hook.status, 0, hook.stderr);
+    const denied = JSON.parse(hook.stdout.trim());
+    assert.equal(denied.decision, "defer");
+    assert.notEqual(denied.decision, "allow");
+    const argv = JSON.parse(readFileSync(argvLog, "utf8"));
+    const wire = argv[argv.indexOf("--tool-input") + 1];
+    assert.notEqual(wire, "notes/a.md");
+    const parsed = JSON.parse(wire);
+    assert.equal(parsed.path, "notes/a.md");
+    assert.equal(parsed.proposed.length, 4000);
+    assert.equal(parsed.proposed.includes(secret), false);
+    assert.ok(parsed.proposed.includes("[redacted]"));
+    assert.ok(parsed.proposed.includes("Z"));
+    assert.equal(wire.includes(secret), false);
+    rmSync(dir, { recursive: true, force: true });
+  }),
+
+  test("check stays on git-worktree gatherDiff and empty findings are not approval", async () => {
+    const src = readFileSync(join(here, "jev-router.mjs"), "utf8");
+    const permissionSrc = src.slice(src.indexOf("function permissionDecision"), src.indexOf("function withPermission"));
+    assert.match(permissionSrc, /parseWriteToolWire/);
+    assert.doesNotMatch(permissionSrc, /gatherDiff/);
+    const checkSrc = src.slice(src.indexOf("async function runCheckWorkflow"), src.indexOf("async function shadowWorkflowChoice"));
+    assert.match(checkSrc, /gatherDiff\(evidenceOpts\(args\)\)/);
+    assert.doesNotMatch(checkSrc, /parseWriteToolWire/);
+
+    const dir = mkdtempSync(join(tmpdir(), "jev-g1-repo-"));
+    const git = (args) => {
+      const run = spawnSync(
+        "git",
+        ["-c", "commit.gpgsign=false", "-c", "user.name=jev", "-c", "user.email=jev@example.com", ...args],
+        {
+          cwd: dir,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            HOME: dir,
+            GIT_CONFIG_GLOBAL: "/dev/null",
+            GIT_CONFIG_SYSTEM: "/dev/null",
+            GIT_AUTHOR_NAME: "jev",
+            GIT_AUTHOR_EMAIL: "jev@example.com",
+            GIT_COMMITTER_NAME: "jev",
+            GIT_COMMITTER_EMAIL: "jev@example.com",
+          },
+        },
+      );
+      const spawnError = run.error && run.error.message ? run.error.message : run.error || "";
+      assert.equal(run.status, 0, `${args.join(" ")}\n${run.stderr}\n${spawnError}`);
+    };
+    git(["init"]);
+    writeFileSync(join(dir, "a.js"), "test('ok', () => { expect(1).toBe(1); });\n");
+    git(["add", "a.js"]);
+    git(["commit", "-m", "init"]);
+    writeFileSync(join(dir, "a.js"), "test.skip('ok', () => { expect(1).toBe(1); });\n");
+    const worktree = gatherDiff({ repo: dir });
+    assert.equal(worktree.source, "git-worktree");
+    assert.match(worktree.text, /test\.skip/);
+    const fromWorktree = await runCheck({ diffText: worktree.text, missingKey: true, mode: "shadow" });
+    assert.equal(fromWorktree.approval, false);
+    assert.ok(fromWorktree.findings.some((row) => row.flag === "skip_marker_added"));
+
+    const pathOnly = parseWriteToolWire("a.js");
+    const ignored = decidePermission({
+      classId: "write",
+      requestedMode: "active",
+      hasKey: true,
+      diffText: pathOnly.diffText,
+      path: pathOnly.path,
+    });
+    assert.equal(pathOnly.diffText, "");
+    assert.equal(ignored.reason, "empty_findings_not_approval");
+
+    const empty = await runCheck({ diffText: gatherDiff({ diffFile: emptyDiff }).text, missingKey: true });
+    assert.equal(empty.status, "no_diff");
+    assert.equal(empty.approval, false);
+    assert.equal(empty.emptyFindingsAreNotApproval, true);
+    rmSync(dir, { recursive: true, force: true });
   }),
 
   test("runCheck with fake judge parks / finds via code thresholds", async () => {
@@ -1109,6 +1311,142 @@ const cases = [
     assert.equal(shadowEmpty.mapped, "writer");
   }),
 
+  test("write concern under 0.4 continues and named deny flags still stop", () => {
+    assert.equal(CHECK_POLICY.concernPark, 0.4);
+    assert.equal(LOOP_STOP_POLICY.minConfidence, 0.6);
+    assert.equal(LOOP_STOP_POLICY.minProbability, 0.55);
+    assert.equal(LOOP_STOP_POLICY.minMargin, 0.15);
+    const docs = [
+      "diff --git a/notes/a.md b/notes/a.md",
+      "--- a/notes/a.md",
+      "+++ b/notes/a.md",
+      "@@",
+      "-old",
+      "+new paragraph",
+    ].join("\n");
+    const continued = decidePermission({
+      classId: "write",
+      requestedMode: "active",
+      hasKey: true,
+      concern: 0.2,
+      path: "notes/a.md",
+      diffText: docs,
+    });
+    assert.equal(continued.mapped, "continue");
+    assert.equal(continued.choice, "continue");
+    assert.equal(continued.gate, "auto");
+    assert.equal(continued.blocked, false);
+    assert.equal(continued.codeDeny, false);
+    assert.equal(continued.autoAllow, false);
+    assert.notEqual(continued.auto_allow, true);
+    const payload = applyPermissionVerdict(
+      { mode: "active", choice: "continue", gate: "auto", blocked: false, exec: true },
+      continued,
+    );
+    const hook = pretoolHookDecision(payload);
+    assert.equal(hook.decision, "defer");
+    assert.notEqual(hook.decision, "allow");
+    const viaHook = decideHook({
+      event: { toolName: "search_replace" },
+      env: { JEV_PERMISSION_MODE: "active", TYPESAFE_API_KEY: "present-key" },
+      verdict: payload,
+    });
+    assert.equal(viaHook.decision, "defer");
+    assert.notEqual(viaHook.decision, "allow");
+
+    const shadow = decidePermission({
+      classId: "write",
+      requestedMode: "shadow",
+      hasKey: true,
+      concern: 0.2,
+      path: "notes/a.md",
+      diffText: docs,
+    });
+    assert.equal(shadow.mapped, "continue");
+    assert.equal(shadow.honor, false);
+    assert.equal(shadow.blocked, false);
+    assert.equal(shadow.autoAllow, false);
+
+    const zero = decidePermission({
+      classId: "write",
+      requestedMode: "active",
+      hasKey: true,
+      concern: 0,
+      path: "notes/a.md",
+      diffText: docs,
+    });
+    assert.equal(zero.choice, "continue");
+    assert.equal(zero.gate, "auto");
+    assert.equal(zero.autoAllow, false);
+
+    for (const concern of [undefined, null, Number.NaN, "0.2"]) {
+      const absent = decidePermission({
+        classId: "write",
+        requestedMode: "active",
+        hasKey: true,
+        concern,
+        path: "notes/a.md",
+        diffText: docs,
+      });
+      assert.notEqual(absent.mapped, "continue", String(concern));
+      assert.notEqual(absent.choice, "continue", String(concern));
+      assert.equal(absent.label, "ask");
+    }
+    const atBar = decidePermission({
+      classId: "write",
+      requestedMode: "active",
+      hasKey: true,
+      concern: CHECK_POLICY.concernPark,
+      path: "notes/a.md",
+      diffText: docs,
+    });
+    assert.notEqual(atBar.mapped, "continue");
+    assert.equal(atBar.label, "ask");
+    const absentHook = pretoolHookDecision(
+      applyPermissionVerdict(
+        { mode: "active", choice: "continue", gate: "auto", blocked: false, exec: true },
+        decidePermission({
+          classId: "write",
+          requestedMode: "active",
+          hasKey: true,
+          path: "notes/a.md",
+          diffText: docs,
+        }),
+      ),
+    );
+    assert.equal(absentHook.decision, "deny");
+
+    const deleted = [
+      "diff --git a/src/math.test.js b/src/math.test.js",
+      "--- a/src/math.test.js",
+      "+++ /dev/null",
+      "@@ deleted file",
+      "-const value = 1;",
+    ].join("\n");
+    const cases = [
+      ["secret_path", { path: ".env", diffText: docs }],
+      ["skip_marker_added", { diffText: readFileSync(skipDiff, "utf8") }],
+      ["assertions_removed", { diffText: readFileSync(assertDiff, "utf8") }],
+      ["test_file_deleted", { diffText: deleted }],
+    ];
+    for (const [flag, input] of cases) {
+      const stopped = decidePermission({
+        classId: "write",
+        requestedMode: "active",
+        hasKey: true,
+        concern: 0.2,
+        ...input,
+      });
+      assert.equal(stopped.reason, flag);
+      assert.equal(stopped.mapped, "stop");
+      assert.equal(stopped.choice, "stop");
+      assert.equal(stopped.label, "deny");
+      assert.equal(stopped.codeDeny, true);
+      assert.equal(stopped.autoAllow, false);
+      assert.notEqual(stopped.choice, "continue");
+    }
+  }),
+
   test("mcp permission wraps route-workflow and does not add a catalog", () => {
     const mcp = decidePermission({
       classId: "mcp",
@@ -1742,8 +2080,109 @@ const cases = [
       routingOutcome: "check",
       typed: { ...allowed, honor: false, mode: "shadow" },
     });
-    assert.equal(stillAsk.reason, "workflow_is_not_permission");
+    assert.notEqual(stillAsk.reason, "workflow_is_not_permission");
     assert.equal(stillAsk.label, "ask");
+    assert.notEqual(stillAsk.mapped, "continue");
+  }),
+
+  test("mcp read follows loop-stop when typed-call mode is unset", () => {
+    const confident = {
+      label: "allow",
+      confidence: 0.9,
+      probabilities: { allow: 0.8, deny: 0.1, ask: 0.1 },
+    };
+    const shell = decidePermission({
+      classId: "shell",
+      requestedMode: "active",
+      hasKey: true,
+      contentPresent: true,
+      ...confident,
+    });
+    const read = decidePermission({
+      classId: "mcp",
+      requestedMode: "active",
+      hasKey: true,
+      toolName: "linear__list_issues",
+      effect: "read",
+      ...confident,
+    });
+    assert.equal(read.mapped, shell.mapped);
+    assert.equal(read.choice, shell.choice);
+    assert.equal(read.gate, shell.gate);
+    assert.equal(read.label, shell.label);
+    assert.equal(read.reason, shell.reason);
+    assert.equal(read.choice, "continue");
+    assert.equal(read.gate, "auto");
+    assert.equal(read.autoAllow, false);
+    assert.equal(read.policyId, ROUTING_POLICY.version);
+    assert.notEqual(read.reason, "workflow_is_not_permission");
+    const hook = decideHook({
+      event: { toolName: "linear__list_issues" },
+      env: { JEV_PERMISSION_MODE: "active", TYPESAFE_API_KEY: "present-key" },
+      verdict: applyPermissionVerdict(
+        {
+          mode: "active",
+          choice: "continue",
+          gate: "auto",
+          blocked: false,
+          exec: true,
+          pretool: pretoolStamp({ toolName: "linear__list_issues" }),
+        },
+        read,
+      ),
+    });
+    assert.equal(hook.decision, "defer");
+    assert.notEqual(hook.decision, "allow");
+
+    const search = decidePermission({
+      classId: "mcp",
+      requestedMode: "active",
+      hasKey: true,
+      toolName: "lapis__search",
+      typed: { honor: false, reason: "no_catalog", label: "ask", mapped: "escalate" },
+      ...confident,
+    });
+    assert.equal(search.choice, "continue");
+    assert.equal(search.gate, "auto");
+    assert.equal(search.mapped, "continue");
+    assert.equal(search.autoAllow, false);
+    assert.notEqual(search.reason, "workflow_is_not_permission");
+    assert.notEqual(search.reason, "no_catalog");
+
+    const bare = decidePermission({
+      classId: "mcp",
+      requestedMode: "active",
+      hasKey: true,
+      toolName: "lapis__search",
+    });
+    assert.notEqual(bare.reason, "workflow_is_not_permission");
+    assert.notEqual(bare.mapped, "continue");
+    assert.equal(bare.label, "ask");
+
+    const mutate = decidePermission({
+      classId: "mcp",
+      requestedMode: "active",
+      hasKey: true,
+      toolName: "linear__save_issue",
+      effect: "write",
+      ...confident,
+    });
+    assert.equal(mutate.label, "ask");
+    assert.equal(mutate.mapped, "escalate");
+    assert.equal(mutate.choice, "escalate");
+    assert.equal(mutate.reason, "mutating_mcp");
+    assert.equal(mutate.autoAllow, false);
+    assert.notEqual(mutate.choice, "continue");
+
+    const namedMutate = decidePermission({
+      classId: "mcp",
+      requestedMode: "active",
+      hasKey: true,
+      toolName: "notes__add",
+      ...confident,
+    });
+    assert.equal(namedMutate.label, "ask");
+    assert.notEqual(namedMutate.mapped, "continue");
   }),
 
   test("typed call CLI stays shadow without a key and does not print a secret", () => {
@@ -1990,6 +2429,81 @@ printf '%s\\n' '{"ok":true,"mode":"active","choice":"stop","gate":"hold","blocke
     assert.equal(config.status, 0, config.stderr);
     assert.equal(config.stderr, "");
     rmSync(dir, { recursive: true, force: true });
+  }),
+
+  test("hold reason includes detail and question and smoke logs one temp line", () => {
+    const held = decidePermission({
+      classId: "write",
+      requestedMode: "active",
+      hasKey: true,
+      diffText: "",
+      path: "src/app.js",
+    });
+    assert.equal(held.reason, "empty_findings_not_approval");
+    assert.match(held.hold, /detail=empty_findings_not_approval/);
+    assert.match(held.hold, /question=/);
+    const hook = decideHook({
+      event: { toolName: "search_replace" },
+      env: { JEV_PERMISSION_MODE: "active", TYPESAFE_API_KEY: "present-key" },
+      verdict: applyPermissionVerdict(
+        {
+          mode: "shadow",
+          choice: "continue",
+          gate: "auto",
+          blocked: false,
+          exec: true,
+          pretool: pretoolStamp({ toolName: "search_replace" }),
+        },
+        held,
+      ),
+    });
+    assert.equal(hook.decision, "deny");
+    assert.match(hook.reason, /policy=omapi-check-policy@1/);
+    assert.match(hook.reason, /detail=empty_findings_not_approval/);
+    assert.match(hook.reason, /question=/);
+    assert.notEqual(hook.decision, "allow");
+
+    const continued = decidePermission({
+      classId: "write",
+      requestedMode: "active",
+      hasKey: true,
+      concern: 0.2,
+      path: "notes/a.md",
+      diffText: "diff --git a/notes/a.md b/notes/a.md\n@@\n-old\n+new\n",
+    });
+    assert.equal(continued.choice, "continue");
+    assert.equal(continued.hold, undefined);
+
+    for (const flag of ["secret_path", "skip_marker_added", "assertions_removed", "test_file_deleted"]) {
+      const stopped = decidePermission({
+        classId: "write",
+        requestedMode: "active",
+        hasKey: true,
+        concern: 0.2,
+        flags: [flag],
+        path: "src/app.js",
+      });
+      assert.equal(stopped.reason, flag);
+      assert.match(stopped.hold, new RegExp(`detail=${flag}`));
+      assert.match(stopped.hold, /question=/);
+    }
+
+    const smoke = spawnSync(process.execPath, [join(here, "harness.mjs"), "smoke"], { encoding: "utf8" });
+    assert.equal(smoke.status, 0, smoke.stderr);
+    const report = JSON.parse(smoke.stdout);
+    const logPath = report.decisionLog.path;
+    assert.equal(report.decisionLog.lines, 1);
+    assert.ok(logPath.startsWith(tmpdir()));
+    assert.equal(logPath.includes("/.grok/logs/jev"), false);
+    const body = readFileSync(logPath, "utf8");
+    const lines = body.trim().split("\n");
+    assert.equal(lines.length, 1);
+    const row = JSON.parse(lines[0]);
+    assert.equal(row.decision, "deny");
+    assert.match(row.reason, /detail=/);
+    assert.match(row.reason, /question=/);
+    assert.equal(row.reason.includes("TYPESAFE_API_KEY"), false);
+    rmSync(dirname(logPath), { recursive: true, force: true });
   }),
 ];
 

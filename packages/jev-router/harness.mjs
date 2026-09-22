@@ -20,12 +20,14 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, realpathSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyCallsVerdict, decideTypedCalls, effectiveTypedCallMode, normalizeCatalog } from "./calls.mjs";
 import { schemaDumpCall, tinyCatalog } from "./catalog.mjs";
-import { applyPermissionVerdict, decidePermission, effectivePermissionMode } from "./permission.mjs";
+import { writeToolWire } from "./facts.mjs";
+import { applyPermissionVerdict, decidePermission, effectivePermissionMode, holdSuffix } from "./permission.mjs";
 import {
   isJevBypass,
   matchPretoolClass,
@@ -94,14 +96,23 @@ export function parseHookEvent(text) {
   };
 }
 
-export function toolInputText(event) {
+function scrubWriteInput(value, env) {
+  if (typeof value === "string") return scrubText(value, env);
+  if (Array.isArray(value)) return value.map((item) => scrubWriteInput(item, env));
+  if (!value || typeof value !== "object") return value;
+  const out = {};
+  for (const [key, item] of Object.entries(value)) out[key] = scrubWriteInput(item, env);
+  return out;
+}
+
+export function toolInputText(event, env = {}) {
   const stamp = pretoolStamp({ toolName: event && event.toolName ? event.toolName : "" });
   if (!stamp || !stamp.matched) return "";
   const input = event.toolInput;
   if (typeof input === "string") return input;
   if (!input || typeof input !== "object") return "";
   if (stamp.class === "shell") return String(input.command || input.cmd || "");
-  if (stamp.class === "write") return String(input.path || input.file_path || input.filePath || "");
+  if (stamp.class === "write") return writeToolWire(scrubWriteInput(input, env));
   return "";
 }
 
@@ -138,9 +149,29 @@ export function decideHook({ event = {}, env = {}, verdict } = {}) {
   }
   if (verdict === null || typeof verdict !== "object" || Array.isArray(verdict)) return uncertain(modes, stamp);
   const withStamp = verdict.pretool && verdict.pretool.policyId ? verdict : { ...verdict, pretool: stamp };
-  const decision = pretoolHookDecision(withStamp);
+  const decision = annotateHold(pretoolHookDecision(withStamp), withStamp);
   if (decision.decision !== "defer" && decision.decision !== "deny") return uncertain(modes, stamp);
   return done({ ...decision, pretool: withStamp.pretool });
+}
+
+function annotateHold(decision, verdict) {
+  if (!decision || decision.decision !== "deny") return decision;
+  const reason = String(decision.reason || "");
+  if (!reason.startsWith("jev choice=")) return decision;
+  if (reason.includes("detail=") && reason.includes("question=")) return decision;
+  const permission = verdict && verdict.permission;
+  const calls = verdict && verdict.calls;
+  const suffix =
+    permission &&
+    typeof permission.hold === "string" &&
+    permission.hold.includes("detail=") &&
+    permission.hold.includes("question=")
+      ? permission.hold
+      : holdSuffix({
+          reason: (permission && permission.reason) || (calls && calls.reason) || (verdict && verdict.choice) || "",
+          choice: (permission && permission.choice) || (verdict && verdict.choice) || "",
+        });
+  return { ...decision, reason: `${reason} ${suffix}` };
 }
 
 function scrubText(text, env) {
@@ -149,10 +180,16 @@ function scrubText(text, env) {
   return String(text || "").split(secret).join("[redacted]");
 }
 
+function forwardedToolInput(event, env) {
+  const stamp = pretoolStamp({ toolName: event && event.toolName ? event.toolName : "" });
+  if (stamp && stamp.class === "write") return toolInputText(event, env);
+  return scrubText(toolInputText(event, env), env).slice(0, INPUT_CAP);
+}
+
 function spawnRouter(event, env) {
   const bin = (env && env.JEV_ROUTER) || "jev-router";
   const intent = scrubText(event.intent || event.toolName || "", env).slice(0, INPUT_CAP);
-  const toolInput = scrubText(toolInputText(event), env).slice(0, INPUT_CAP);
+  const toolInput = forwardedToolInput(event, env);
   const argv = ["--tool-name", event.toolName, "--intent", intent || event.toolName];
   if (toolInput.trim()) argv.push("--tool-input", toolInput);
   if (env && env.JEV_TOOLS_FILE) argv.push("--tools-file", env.JEV_TOOLS_FILE);
@@ -212,7 +249,7 @@ function shellDenyAnswer() {
  * PreToolUse class → policy id, tiny discovery, MCP intent → FACET tool_call,
  * permission observed in shadow and enforced when that surface is active.
  */
-export function runSmoke() {
+export function runSmoke({ logDir } = {}) {
   const bashEvent = parseHookEvent(readFileSync(BASH_FIXTURE, "utf8"));
   expect(bashEvent.ok, "bash fixture");
   const bashStamp = pretoolStamp({ toolName: bashEvent.event.toolName });
@@ -408,6 +445,18 @@ export function runSmoke() {
     ),
   );
   expect(emptyHook.decision === "deny", "empty findings do not allow");
+  expect(emptyHook.reason.includes("detail=") && emptyHook.reason.includes("question="), "hold names a detail and a question");
+
+  const decisionDir = logDir || mkdtempSync(join(tmpdir(), "jev-decision-"));
+  const decisionPath = join(decisionDir, "decision.jsonl");
+  writeFileSync(
+    decisionPath,
+    `${JSON.stringify({
+      decision: emptyHook.decision,
+      reason: emptyHook.reason,
+      policyId: emptyHook.pretool ? emptyHook.pretool.policyId : null,
+    })}\n`,
+  );
 
   const keyAbsent = decidePermission({
     classId: "shell",
@@ -506,6 +555,7 @@ export function runSmoke() {
     readStaysDefer: { decision: readHook.decision },
     loopStopWins: { decision: loopStopWins.decision },
     unmapped: { decision: unmapped.decision, reason: unmapped.reason },
+    decisionLog: { path: decisionPath, lines: 1 },
   };
   const found = [];
   const walk = (value) => {

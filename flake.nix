@@ -341,7 +341,7 @@
           '';
 
           # Unit tests: policy, available-gate, check envelope. No live Jev.
-          jev-router-unit = pkgs.runCommand "jev-router-unit" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
+          jev-router-unit = pkgs.runCommand "jev-router-unit" { nativeBuildInputs = [ pkgs.nodejs pkgs.git ]; } ''
             set -eu
             cp -r ${./packages/jev-router}/. .
             cp ${./docs/POLICY-MAP.md} ./POLICY-MAP.md

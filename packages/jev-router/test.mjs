@@ -752,7 +752,11 @@ const cases = [
   }),
 
   test("wrap script does not flip permission catalogs or bake a key", () => {
-    const wrap = readFileSync(join(here, "..", "cursor-agent-jev.nix"), "utf8");
+    const wrapPath = [join(here, "cursor-agent-jev.nix"), join(here, "..", "cursor-agent-jev.nix")].find((path) =>
+      existsSync(path),
+    );
+    assert.ok(wrapPath, "cursor-agent-jev.nix missing");
+    const wrap = readFileSync(wrapPath, "utf8");
     assert.equal(wrap.includes("JEV_PERMISSION_MODE"), false);
     assert.equal(wrap.includes("--schema"), true);
     assert.equal(wrap.includes("--catalog"), true);

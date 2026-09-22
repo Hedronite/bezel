@@ -154,6 +154,7 @@
             set -eu
             cp -r ${./packages/jev-router}/. .
             cp ${./docs/POLICY-MAP.md} ./POLICY-MAP.md
+            cp ${./packages/cursor-agent-jev.nix} ./cursor-agent-jev.nix
             JEV_ROUTER_BIN="${lib.getExe self.packages.${system}.jev-router}" node test.mjs
             echo ok >"$out"
           '';

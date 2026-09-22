@@ -1,0 +1,1 @@
+{"path":"src/a.test.js","proposed":"diff --git a/src/a.test.js b/src/a.test.js\n--- a/src/a.test.js\n+++ b/src/a.test.js\n@@\n-expect(1)\n+expect(2)"}

@@ -1,0 +1,1 @@
+{"path":"notes/a.md","proposed":"diff --git a/notes/a.md b/notes/a.md\n--- /dev/null\n+++ b/notes/a.md\n@@\n+hello\n+"}

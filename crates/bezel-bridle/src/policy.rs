@@ -5,6 +5,7 @@ pub const CHECK_POLICY_ID: &str = "omapi-check-policy@1";
 pub const LOOP_STOP_POLICY_ID: &str = "omapi-loop-stop-policy@1";
 pub const ROUTING_POLICY_ID: &str = "omapi-route-workflow-policy@1";
 pub const CONCERN_PARK: f64 = 0.4;
+pub const MAX_HUNK_CHARS: usize = 4000;
 pub const AUTO_ALLOW: bool = false;
 
 pub const LOOP_STOP_MIN_CONFIDENCE: f64 = 0.6;

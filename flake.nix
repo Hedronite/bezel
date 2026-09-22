@@ -129,9 +129,17 @@
             EOS
             chmod +x "$fake"
 
-            got="$(OMP_BIN="$fake" "$wrap" --version)"
+            outf="$(mktemp)"
+            errf="$(mktemp)"
+            OMP_BIN="$fake" "$wrap" --version >"$outf" 2>"$errf"
+            got="$(cat "$outf")"
             echo "$got" | grep -q 'overlay=1'
             echo "$got" | grep -q -- '--version'
+            # Launch is quiet. The mark banner is deleted, not hidden on a non-TTY.
+            if grep -F 'oma on' "$outf" "$errf" "$wrap" || grep -F 'omapi-mark' "$outf" "$errf" "$wrap"; then
+              echo "omapi launch printed a splash banner" >&2
+              exit 1
+            fi
 
             echo ok >"$out"
           '';

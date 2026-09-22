@@ -1,8 +1,4 @@
 <p align="center">
-  <img src="assets/omapi-mark.png" alt="omapi — oma on π" width="280">
-</p>
-
-<p align="center">
   <strong>omapi-overlay</strong> — a Nix flake overlay: stock <strong>omp</strong>, thin <code>omapi</code> wrap, skills input, optional Jev gates.
 </p>
 

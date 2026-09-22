@@ -1,4 +1,4 @@
-# SPIKE — permission Choice catalogs (shadow)
+# Bezel permission Choice catalogs (shadow)
 
 Extend the PreToolUse gate with a permission view for **shell**, **write**, and
 **MCP**. This wraps the families that already exist. It is not a second

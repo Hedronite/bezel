@@ -1,4 +1,4 @@
-# Shadow diff check (`jev-router --check`)
+# Bezel shadow diff check (`jev-router --check`)
 
 Bounded check: code gathers evidence, Jev classifies, code applies thresholds.
 **Do not** vendor

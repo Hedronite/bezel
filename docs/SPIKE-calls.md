@@ -1,4 +1,4 @@
-# SPIKE — typed Calls (MCP / tool intent)
+# Bezel typed Calls (MCP / tool intent)
 
 Route an MCP or tool intent into one typed call: a Choice over the operator's
 catalog, closed-set arguments, then code picks **best** and **top-X**. The

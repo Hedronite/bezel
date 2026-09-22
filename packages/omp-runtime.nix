@@ -7,7 +7,7 @@ writeShellApplication {
   text = ''
     if [ -n "''${OMP_BIN:-}" ]; then
       if [ ! -x "$OMP_BIN" ]; then
-        echo "omapi-overlay: OMP_BIN=$OMP_BIN is not executable (fail closed)." >&2
+        echo "bezel: OMP_BIN=$OMP_BIN is not executable (fail closed)." >&2
         exit 127
       fi
       exec "$OMP_BIN" "$@"
@@ -30,9 +30,9 @@ writeShellApplication {
     unset IFS
 
     if [ -z "$found" ]; then
-      echo "omapi-overlay: omp binary not found." >&2
+      echo "bezel: omp binary not found." >&2
       echo "Install omp from https://omp.sh or set OMP_BIN to that binary." >&2
-      echo "Or build .#omapi-pinned for the fetched release. See the README." >&2
+      echo "Or build .#bezel-pinned for the fetched release. See the README." >&2
       exit 127
     fi
     exec "$found" "$@"

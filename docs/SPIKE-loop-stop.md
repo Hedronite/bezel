@@ -1,4 +1,4 @@
-# Loop-stop and escalate
+# Bezel loop-stop and escalate
 
 Give `jev-router` a **continue / stop / escalate** decision over intent plus an
 optional step digest, and honor it in `cursor-agent-jev`.

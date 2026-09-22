@@ -1,4 +1,4 @@
-# Grok Build harness
+# Bezel on Grok Build
 
 `grok-build-jev` is the PreToolUse adapter for the controls already in
 `jev-router`. Grok Build calls the adapter. The adapter calls `jev-router`.

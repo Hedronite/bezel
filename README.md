@@ -1,81 +1,116 @@
-# omapi-overlay
+# Bezel
 
-A Nix flake overlay for agent harnesses. It adds **skills**, **Jev policy gates**, and a small **tool catalog**. You keep the harness you already run. This repository does not include harness source.
+Bezel is a harness overlay. It supplements an agent harness you already run with skills, a Jev toolkit, and gate adapters. You keep the harness. This repository does not include harness source.
 
-[![CI](https://img.shields.io/github/actions/workflow/status/VirtualMachinist/omapi-overlay/ci.yml?branch=main&style=flat&colorA=222222&colorB=3FB950)](https://github.com/VirtualMachinist/omapi-overlay/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/VirtualMachinist/bezel/ci.yml?branch=main&style=flat&colorA=222222&colorB=3FB950)](https://github.com/VirtualMachinist/bezel/actions/workflows/ci.yml)
 [![MIT license](https://img.shields.io/badge/License-MIT-58A6FF?style=flat&colorA=222222)](#license)
 [![Nix](https://img.shields.io/badge/Nix-5277C3?style=flat&colorA=222222&logo=nixos&logoColor=white)](https://nixos.org)
-[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat&colorA=222222&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Node](https://img.shields.io/badge/Node-339933?style=flat&colorA=222222&logo=nodedotjs&logoColor=white)](https://nodejs.org)
 
-[What it is](#what-it-is) ·
+[What Bezel is](#what-bezel-is) ·
+[What Bezel is not](#what-bezel-is-not) ·
 [Quick start](#quick-start) ·
 [Packages](#packages) ·
+[Names](#names) ·
 [Jev](#jev) ·
 [Skills](#skills) ·
 [Platforms](#platforms) ·
 [Status](#status) ·
 [Contributing](#contributing)
 
-## What it is
+## What Bezel is
 
-| Piece | What it does |
+Bezel is the supplement, not the harness. It ships the suite in one Nix flake: skills, the Jev toolkit, and adapters that call that toolkit.
+
+| Piece | What you get |
 | --- | --- |
-| Skills | Flake input `inputs.skills`: directories that each contain `SKILL.md`. Home Manager symlinks that store path to the directory the harness reads. |
-| Jev | `jev-router` asks Typesafe for a policy decision and prints one JSON verdict. Shadow, the default, logs the verdict and does not block. |
-| Tooling | `jev-router --catalog` prints a small tool index. `--schema NAME` prints one JSON Schema. Reading a schema does not allow the tool. |
-| Harness attach | `omapi` runs a host `omp` binary (`PATH` or `$OMP_BIN`), or a pinned release via `omapi-pinned`. `cursor-agent-jev` runs `cursor-agent` after the gate. |
+| Skills | Flake input `inputs.skills`. Each skill is a directory with `SKILL.md`. Home Manager symlinks that store path to the directory the harness already reads. |
+| Jev | `jev-router` asks Typesafe for one policy decision and prints one JSON verdict. Shadow, the default, logs the verdict and does not block. |
+| Toolkit | `jev-router --catalog` prints a small tool index. `--schema NAME` prints one JSON Schema. Reading a schema does not allow the tool. `--check` is a shadow diff check. |
+| Cursor | `cursor-agent-jev` runs the gate, then execs `cursor-agent`. |
+| Grok Build | `grok-build-jev` is the PreToolUse adapter. It calls `jev-router` and prints `defer` or `deny`. It does not install a host hook. |
+| omp, optional | Package `bezel` installs `bezel-omp`, which runs upstream `omp` from `PATH` or `$OMP_BIN`. `bezel-pinned` points that same wrap at a fetched release binary. `omapi` is a symlink to `bezel-omp` for one release. |
+
+Bend2 is a later engine. It is not in this tree. The Jev router is still JavaScript. A Rust rewrite is a later phase.
 
 Use `overlays.default`, `homeManagerModules.default`, or `packages.<system>.*`.
 
-The commands are `omapi`, `jev-router`, `cursor-agent-jev`, and `grok-build-jev`.
+## What Bezel is not
+
+| Not this | What that means |
+| --- | --- |
+| Omarchy | Bezel is not a Linux distribution, a desktop, or an OS image. |
+| An omp fork | There is no omp source here. `bezel-omp` execs the upstream `omp` binary and then gets out of the way. |
+| A splash | Launch output is the wrapped program's output. There is no banner and no TTY gate. |
 
 ## Quick start
 
 From a clone:
 
 ```sh
-nix build .#omapi
+nix build .#bezel
 nix build .#jev-router
 nix build .#cursor-agent-jev
 nix build .#grok-build-jev
 ```
 
-Default `omapi` runs `omp` from `PATH` or `$OMP_BIN`. If neither is present, it exits **127** and prints how to fix that.
+`bezel-omp` runs `omp` from `PATH` or `$OMP_BIN`. If neither is present, it exits **127** and prints how to fix that. The package attribute is `bezel`. The binary is not named `bezel`.
 
-To put the pinned [oh-my-pi v18.2.6](https://github.com/can1357/oh-my-pi/releases/tag/v18.2.6) binary in the Nix store (~180–240 MB):
+The pinned [oh-my-pi v18.2.6](https://github.com/can1357/oh-my-pi/releases/tag/v18.2.6) binary is opt-in (~180–240 MB):
 
 ```sh
-nix build .#omapi-pinned
+nix build .#bezel-pinned
 ```
 
 ### Flake input (Home Manager)
 
+The product name is Bezel. The repository is [VirtualMachinist/bezel](https://github.com/VirtualMachinist/bezel). An input that still says `omapi-overlay` follows GitHub's redirect.
+
 ```nix
 {
-  inputs.omapi-overlay.url = "github:VirtualMachinist/omapi-overlay";
+  inputs.bezel.url = "github:VirtualMachinist/bezel";
 }
 
 {
-  nixpkgs.overlays = [ inputs.omapi-overlay.overlays.default ];
+  nixpkgs.overlays = [ inputs.bezel.overlays.default ];
   home-manager.users.you = {
-    imports = [ inputs.omapi-overlay.homeManagerModules.default ];
-    programs.omapi.enable = true;
+    imports = [ inputs.bezel.homeManagerModules.default ];
+    programs.bezel.enable = true;
   };
 }
 ```
 
-`programs.omapi.enable` installs `omapi` and, by default, `jev-router`, `cursor-agent-jev`, and `grok-build-jev`. It symlinks the skills input to `~/.config/omp/agent/skills`, the directory the wrapped harness loads.
+`programs.bezel.enable` installs `bezel` (`bezel-omp`), `jev-router`, `cursor-agent-jev`, and `grok-build-jev`. It symlinks the skills input to `~/.config/omp/agent/skills`, the directory the omp harness loads. `programs.omapi` is deprecated; it renames to `programs.bezel`.
 
 ## Packages
 
 | Package | What it is |
 | --- | --- |
-| **`omapi`** | Runs host `omp` or `$OMP_BIN`. Exits 127 if neither exists. |
-| **`omapi-pinned`** | Same wrap, pointed at a fetched [oh-my-pi v18.2.6](https://github.com/can1357/oh-my-pi/releases/tag/v18.2.6) binary. |
+| **`bezel`** | Installs `bezel-omp`, which runs host `omp` or `$OMP_BIN`. Exits 127 if neither exists. Also installs `omapi` as a symlink to `bezel-omp` for one release. |
+| **`bezel-pinned`** | Same wrap, pointed at a fetched [oh-my-pi v18.2.6](https://github.com/can1357/oh-my-pi/releases/tag/v18.2.6) binary. |
 | **`jev-router`** | Node router. Asks Typesafe for a Choice and prints a JSON verdict. Loop-stop (`continue` / `stop` / `escalate`), `jev-router --check` for a shadow diff check, shadow permission catalogs, and a small tool catalog (`--catalog`, `--schema NAME`). |
 | **`cursor-agent-jev`** | Runs `jev-router`, then execs `cursor-agent` (`cursor-agent` must already be on `PATH`). Shadow never blocks. Active honors continue and `gate: auto` only. `--catalog` and `--schema` print and do not exec. |
 | **`grok-build-jev`** | Grok Build PreToolUse adapter. Calls `jev-router` and prints `defer` or `deny`. Does not install a host hook. |
+
+`packages.default` is `bezel`.
+
+## Names
+
+The flake input and the primary package attribute are `bezel`. `packages.default` is `bezel`.
+
+| What | Name in this release |
+| --- | --- |
+| Product | Bezel |
+| Flake input / package | `bezel`, `bezel-pinned` |
+| omp wrap binary | `bezel-omp` |
+| One-release symlink | `omapi` → `bezel-omp` |
+| Same package attrs | `.#omapi` is `bezel`. `.#omapi-pinned` is `bezel-pinned`. |
+| Jev commands | `jev-router`, `cursor-agent-jev`, `grok-build-jev` |
+| Home Manager | `programs.bezel`. `programs.omapi` is deprecated and renames to `programs.bezel`. |
+| Skills path | `~/.config/omp/agent/skills` (the omp harness path) |
+| Env | `BEZEL_*`. Legacy `OMAPI_*` is still read. The wrap sets both `BEZEL_OVERLAY` and `OMAPI_OVERLAY`. |
+
+Gate version strings stay `omapi-loop-stop-policy@1`, `omapi-check-policy@1`, and `omapi-route-workflow-policy@1`. Those ids are the policy contract. The typed-call host profile id stays `omapi-jev-router`. Changing either would change verdicts, not the product name. `omp-pin` and `omp-runtime` stay those attribute names.
 
 ## Jev
 
@@ -142,7 +177,7 @@ How to run: [docs/GROK-BUILD.md](docs/GROK-BUILD.md).
 
 ## Skills
 
-Skills are a flake input, and that input is the only skills tree this overlay installs. This repo ships `skills-stub` so the input is a valid skills tree (`*/SKILL.md`) on day one. The stub includes `bootstrap` and a shadow `check` skill (`jev-router --check`). Home Manager symlinks that store path to `~/.config/omp/agent/skills`. When you have a skills repo, change `inputs.skills.url` and the lock. Do not copy a second `skills/` tree into this overlay.
+Skills are a flake input, and that input is the only skills tree Bezel installs. This repo ships `skills-stub` so the input is a valid skills tree (`*/SKILL.md`) on day one. The stub includes `bootstrap` and a shadow `check` skill (`jev-router --check`). Home Manager symlinks that store path to `~/.config/omp/agent/skills`. When you have a skills repo, change `inputs.skills.url` and the lock. Do not copy a second `skills/` tree into this overlay.
 
 ## Platforms
 
@@ -157,17 +192,18 @@ Declared systems: `aarch64-darwin`, `x86_64-darwin`, `aarch64-linux`, `x86_64-li
 
 If a later release drops a platform build, `packages/omp-pin.nix` **throws** for that system. A skipped CI row is a skip with a reason, not a pretend build.
 
-`nix flake check` and `nix build .#omapi .#jev-router .#cursor-agent-jev .#grok-build-jev` do **not** download the pin. `nix build .#omapi-pinned` does.
+`nix flake check` and `nix build .#bezel .#jev-router .#cursor-agent-jev .#grok-build-jev` do **not** download the pin. `nix build .#bezel-pinned` does.
 
 ## Status
 
 - Overlay packages evaluate on all four declared systems.
 - CI on this repo **runs** the `x86_64-linux` job. The other three matrix rows skip (no matching hosted runner).
-- `omapi-pinned` is opt-in (180–240 MB download).
+- `bezel-pinned` is opt-in (180–240 MB download).
 - Jev defaults to shadow. `jev-router --check` is the shadow diff check. Empty findings are not approval. Loop-stop is shadow-first. Active `stop` and `escalate` do not exec.
 - The tool catalog is a small always-on index of the existing policy ids. Full schema is `jev-router --schema NAME` and is not an allow. Permission catalogs stay shadow.
 - `grok-build-jev` adapts those controls for Grok Build. Default modes stay shadow. The harness does not install a host hook.
 - Skills ship as `skills-stub` until you change the input URL.
+- Nix packaging stays. The router stays JavaScript in this change.
 
 ## Contributing
 
@@ -175,14 +211,16 @@ Issues and pull requests are welcome. Match CI from a clone:
 
 ```sh
 nix flake check -L
-nix build -L .#omapi .#jev-router .#cursor-agent-jev .#grok-build-jev
+nix build -L .#bezel .#jev-router .#cursor-agent-jev .#grok-build-jev
 ```
 
 Do not commit secrets. `TYPESAFE_API_KEY` and other keys belong in the process environment, not the flake.
 
 ## License
 
-MIT. `omapi-pinned` downloads published binaries from [oh-my-pi](https://github.com/can1357/oh-my-pi) v18.2.6. This overlay does not include that project's source. Install a host `omp` binary from [omp.sh](https://omp.sh), or set `OMP_BIN`.
+MIT. `bezel-pinned` downloads published binaries from [oh-my-pi](https://github.com/can1357/oh-my-pi) v18.2.6. This overlay does not include that project's source. Install a host `omp` binary from [omp.sh](https://omp.sh), or set `OMP_BIN`.
 
-- [GitHub](https://github.com/VirtualMachinist/omapi-overlay)
+Bezel is not Omarchy.
+
+- [This repository](https://github.com/VirtualMachinist/bezel)
 - [oh-my-pi releases](https://github.com/can1357/oh-my-pi/releases/tag/v18.2.6)

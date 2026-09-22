@@ -1,6 +1,6 @@
-# PreToolUse policy ids
+# Bezel PreToolUse policy ids
 
-Grok hooks and this overlay share one map and one `JEV_BYPASS` predicate.
+Grok hooks and Bezel share one map and one `JEV_BYPASS` predicate.
 The hook calls `jev-router`. It does not construct a TypeSafe client.
 
 Canonical matcher and class table: `PRETOOL_MATCHER` / `PRETOOL_CLASSES` in

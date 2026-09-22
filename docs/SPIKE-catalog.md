@@ -1,4 +1,4 @@
-# SPIKE — tiny tool catalog + schema dump
+# Bezel tool catalog and schema dump
 
 Give `cursor-agent-jev` a **tiny always-on catalog** of the PreToolUse tools,
 and an on-demand **schema dump** for one tool. Same `jev-router`, same three

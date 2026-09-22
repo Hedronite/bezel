@@ -807,8 +807,10 @@ const cases = [
   }),
 
   test("planes shim does not print a launch banner", () => {
-    const shim = join(here, "..", "omapi-planes-shim.sh");
-    if (!existsSync(shim)) return;
+    const shim = [join(here, "bezel-planes-shim.sh"), join(here, "..", "bezel-planes-shim.sh")].find((path) =>
+      existsSync(path),
+    );
+    if (!shim) return;
     const text = readFileSync(shim, "utf8");
     assert.equal(text.includes("PLANES filter on"), false);
   }),
@@ -1966,6 +1968,7 @@ printf '%s\\n' '{"ok":true,"mode":"active","choice":"stop","gate":"hold","blocke
     assert.equal(smoke.stdout.includes('"decision":"allow"'), false);
 
     const mark = ["omapi", "mark"].join("-");
+    const bezelMark = ["bezel", "mark"].join("-");
     const banner = ["oma", "on"].join(" ");
     const quiet = (label, args, input) => {
       const run = spawnSync(process.execPath, [join(here, "harness.mjs"), ...args], {
@@ -1975,6 +1978,7 @@ printf '%s\\n' '{"ok":true,"mode":"active","choice":"stop","gate":"hold","blocke
       });
       const blob = `${run.stdout}\n${run.stderr}`;
       assert.equal(blob.includes(mark), false, label);
+      assert.equal(blob.includes(bezelMark), false, label);
       assert.equal(blob.includes(banner), false, label);
       return run;
     };

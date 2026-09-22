@@ -31,7 +31,7 @@ import {
 } from "./catalog.mjs";
 import { deterministicFlags, parseUnifiedDiff, runCheck } from "./check.mjs";
 import { decideHook, harnessConfig, harnessModes, parseHookEvent, runSmoke } from "./harness.mjs";
-import { permissionFromHook } from "./jev-router.mjs";
+
 import {
   availableCapabilities,
   clipToMaxHunkChars,
@@ -47,6 +47,7 @@ import {
   collectWriteFlags,
   decidePermission,
   mapPermissionLabel,
+  permissionFromHook,
   PARENT_POLICY_IDS,
   permissionBypass,
   permissionSurface,
@@ -349,11 +350,15 @@ exec ${shQuote(process.execPath)} ${shQuote(script)} "$@"
 
   test("check stays on git-worktree gatherDiff and empty findings are not approval", async () => {
     const src = readFileSync(join(here, "jev-router.mjs"), "utf8");
-    const permissionSrc = src.slice(src.indexOf("export function permissionFromHook"), src.indexOf("function withPermission"));
-    assert.match(permissionSrc, /parseWriteToolWire/);
+    const permissionSrc = src.slice(src.indexOf("function permissionDecision"), src.indexOf("function withPermission"));
     assert.match(permissionSrc, /toolName: args\.toolName/);
-    assert.match(permissionSrc, /effect: effectFromHook/);
+    assert.match(permissionSrc, /effectFromHook\(args\.toolName/);
     assert.doesNotMatch(permissionSrc, /gatherDiff/);
+    assert.doesNotMatch(permissionSrc, /@typesafe-ai\/sdk/);
+    const hookSrc = readFileSync(join(here, "permission.mjs"), "utf8");
+    const forwarder = hookSrc.slice(hookSrc.indexOf("export function permissionFromHook"), hookSrc.indexOf("export function permissionBypass"));
+    assert.match(forwarder, /parseWriteToolWire/);
+    assert.doesNotMatch(forwarder, /gatherDiff/);
     const checkSrc = src.slice(src.indexOf("async function runCheckWorkflow"), src.indexOf("async function shadowWorkflowChoice"));
     assert.match(checkSrc, /gatherDiff\(evidenceOpts\(args\)\)/);
     assert.doesNotMatch(checkSrc, /parseWriteToolWire/);

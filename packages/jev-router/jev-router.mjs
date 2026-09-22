@@ -68,7 +68,9 @@ import {
   applyPermissionVerdict,
   clipToolInput,
   decidePermission,
+  effectFromHook,
   permissionBypass,
+  permissionFromHook,
   permissionSurface,
   shellPermissionQuestion,
   toolInputPresent,
@@ -300,60 +302,22 @@ function buildCalls(extra = {}) {
   });
 }
 
-function effectFromHook(toolName, toolInput) {
-  if (toolInput && typeof toolInput === "object" && !Array.isArray(toolInput) && typeof toolInput.effect === "string") {
-    return toolInput.effect;
-  }
-  if (typeof toolInput === "string" && toolInput.trim().startsWith("{")) {
-    try {
-      const parsed = JSON.parse(toolInput);
-      if (parsed && typeof parsed.effect === "string") return parsed.effect;
-    } catch {
-      // Shell text is not a tool record.
-    }
-  }
+function permissionDecision(extra = {}) {
   const tools = loadedCatalog && loadedCatalog.catalog && Array.isArray(loadedCatalog.catalog.tools)
     ? loadedCatalog.catalog.tools
     : [];
-  const row = tools.find((tool) => tool && tool.name === toolName);
-  return row && typeof row.effect === "string" ? row.effect : "";
-}
-
-/**
- * Hook record → decidePermission. toolName and effect come from the hook,
- * not from the extra judge fields. Dropping toolName leaves a read-shaped
- * MCP name on the workflow outcome.
- */
-export function permissionFromHook(hook = {}, extra = {}) {
-  const toolName = hook && hook.toolName ? String(hook.toolName) : "";
-  const effect = hook && hook.effect ? String(hook.effect) : "";
-  const toolInput = hook && hook.toolInput !== undefined ? hook.toolInput : "";
-  const stamp = pretoolStamp({ toolName, toolClass: hook && hook.toolClass ? hook.toolClass : "" });
-  const classId = stamp && stamp.matched ? stamp.class : null;
-  if (!permissionSurface(classId)) return null;
-  const write = classId === "write" ? parseWriteToolWire(toolInput) : { diffText: "", path: "" };
-  return decidePermission({
-    classId,
-    requestedMode: process.env.JEV_PERMISSION_MODE,
-    hasKey,
-    contentPresent: classId === "shell" && toolInputPresent(toolInput),
-    diffText: write.diffText,
-    path: write.path,
-    ...extra,
-    toolName,
-    effect,
-  });
-}
-
-function permissionDecision(extra = {}) {
   return permissionFromHook(
     {
       toolName: args.toolName,
-      effect: effectFromHook(args.toolName, args.toolInput),
+      effect: effectFromHook(args.toolName, args.toolInput, tools),
       toolInput: args.toolInput,
       toolClass: args.toolClass,
     },
-    extra,
+    {
+      ...extra,
+      requestedMode: process.env.JEV_PERMISSION_MODE,
+      hasKey,
+    },
   );
 }
 

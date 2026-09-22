@@ -252,7 +252,12 @@ function shellFromLabel(surface, mode, { label, confidence, probabilities, conte
   });
 }
 
-function writeFromFlags(surface, mode, { flags, modelLabel }) {
+/** A missing or non-numeric concern is not under the park bar. */
+function concernUnderPark(concern) {
+  return typeof concern === "number" && Number.isFinite(concern) && concern < CHECK_POLICY.concernPark;
+}
+
+function writeFromFlags(surface, mode, { flags, modelLabel, concern }) {
   const denyFlag = WRITE_CODE_DENY_FLAGS.find((flag) => flags.includes(flag)) || null;
   if (denyFlag) {
     return pack(surface, mode, {
@@ -261,6 +266,15 @@ function writeFromFlags(surface, mode, { flags, modelLabel }) {
       modelLabel: modelLabel ?? null,
       reason: denyFlag,
       codeDeny: true,
+    });
+  }
+  if (concernUnderPark(concern)) {
+    return pack(surface, mode, {
+      mapped: "continue",
+      label: "allow",
+      modelLabel: modelLabel ?? null,
+      reason: "below_park",
+      codeDeny: false,
     });
   }
   return pack(surface, mode, {
@@ -309,6 +323,7 @@ export function decidePermission({
   diffText = "",
   path = "",
   flags = null,
+  concern = null,
   routingOutcome = null,
   typed = null,
   failed = false,
@@ -356,7 +371,7 @@ export function decidePermission({
     return shellFromLabel(surface, mode, { label, confidence, probabilities, contentPresent });
   }
   if (surface.id === "write") {
-    return writeFromFlags(surface, mode, { flags: writeFlags, modelLabel: label });
+    return writeFromFlags(surface, mode, { flags: writeFlags, modelLabel: label, concern });
   }
   return mcpFromRoute(surface, mode, { routingOutcome, typed });
 }

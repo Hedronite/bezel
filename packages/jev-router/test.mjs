@@ -1294,6 +1294,142 @@ process.stdout.write('{"ok":true,"mode":"shadow","choice":"continue","gate":"aut
     assert.equal(shadowEmpty.mapped, "writer");
   }),
 
+  test("write concern under 0.4 continues and named deny flags still stop", () => {
+    assert.equal(CHECK_POLICY.concernPark, 0.4);
+    assert.equal(LOOP_STOP_POLICY.minConfidence, 0.6);
+    assert.equal(LOOP_STOP_POLICY.minProbability, 0.55);
+    assert.equal(LOOP_STOP_POLICY.minMargin, 0.15);
+    const docs = [
+      "diff --git a/notes/a.md b/notes/a.md",
+      "--- a/notes/a.md",
+      "+++ b/notes/a.md",
+      "@@",
+      "-old",
+      "+new paragraph",
+    ].join("\n");
+    const continued = decidePermission({
+      classId: "write",
+      requestedMode: "active",
+      hasKey: true,
+      concern: 0.2,
+      path: "notes/a.md",
+      diffText: docs,
+    });
+    assert.equal(continued.mapped, "continue");
+    assert.equal(continued.choice, "continue");
+    assert.equal(continued.gate, "auto");
+    assert.equal(continued.blocked, false);
+    assert.equal(continued.codeDeny, false);
+    assert.equal(continued.autoAllow, false);
+    assert.notEqual(continued.auto_allow, true);
+    const payload = applyPermissionVerdict(
+      { mode: "active", choice: "continue", gate: "auto", blocked: false, exec: true },
+      continued,
+    );
+    const hook = pretoolHookDecision(payload);
+    assert.equal(hook.decision, "defer");
+    assert.notEqual(hook.decision, "allow");
+    const viaHook = decideHook({
+      event: { toolName: "search_replace" },
+      env: { JEV_PERMISSION_MODE: "active", TYPESAFE_API_KEY: "present-key" },
+      verdict: payload,
+    });
+    assert.equal(viaHook.decision, "defer");
+    assert.notEqual(viaHook.decision, "allow");
+
+    const shadow = decidePermission({
+      classId: "write",
+      requestedMode: "shadow",
+      hasKey: true,
+      concern: 0.2,
+      path: "notes/a.md",
+      diffText: docs,
+    });
+    assert.equal(shadow.mapped, "continue");
+    assert.equal(shadow.honor, false);
+    assert.equal(shadow.blocked, false);
+    assert.equal(shadow.autoAllow, false);
+
+    const zero = decidePermission({
+      classId: "write",
+      requestedMode: "active",
+      hasKey: true,
+      concern: 0,
+      path: "notes/a.md",
+      diffText: docs,
+    });
+    assert.equal(zero.choice, "continue");
+    assert.equal(zero.gate, "auto");
+    assert.equal(zero.autoAllow, false);
+
+    for (const concern of [undefined, null, Number.NaN, "0.2"]) {
+      const absent = decidePermission({
+        classId: "write",
+        requestedMode: "active",
+        hasKey: true,
+        concern,
+        path: "notes/a.md",
+        diffText: docs,
+      });
+      assert.notEqual(absent.mapped, "continue", String(concern));
+      assert.notEqual(absent.choice, "continue", String(concern));
+      assert.equal(absent.label, "ask");
+    }
+    const atBar = decidePermission({
+      classId: "write",
+      requestedMode: "active",
+      hasKey: true,
+      concern: CHECK_POLICY.concernPark,
+      path: "notes/a.md",
+      diffText: docs,
+    });
+    assert.notEqual(atBar.mapped, "continue");
+    assert.equal(atBar.label, "ask");
+    const absentHook = pretoolHookDecision(
+      applyPermissionVerdict(
+        { mode: "active", choice: "continue", gate: "auto", blocked: false, exec: true },
+        decidePermission({
+          classId: "write",
+          requestedMode: "active",
+          hasKey: true,
+          path: "notes/a.md",
+          diffText: docs,
+        }),
+      ),
+    );
+    assert.equal(absentHook.decision, "deny");
+
+    const deleted = [
+      "diff --git a/src/math.test.js b/src/math.test.js",
+      "--- a/src/math.test.js",
+      "+++ /dev/null",
+      "@@ deleted file",
+      "-const value = 1;",
+    ].join("\n");
+    const cases = [
+      ["secret_path", { path: ".env", diffText: docs }],
+      ["skip_marker_added", { diffText: readFileSync(skipDiff, "utf8") }],
+      ["assertions_removed", { diffText: readFileSync(assertDiff, "utf8") }],
+      ["test_file_deleted", { diffText: deleted }],
+    ];
+    for (const [flag, input] of cases) {
+      const stopped = decidePermission({
+        classId: "write",
+        requestedMode: "active",
+        hasKey: true,
+        concern: 0.2,
+        ...input,
+      });
+      assert.equal(stopped.reason, flag);
+      assert.equal(stopped.mapped, "stop");
+      assert.equal(stopped.choice, "stop");
+      assert.equal(stopped.label, "deny");
+      assert.equal(stopped.codeDeny, true);
+      assert.equal(stopped.autoAllow, false);
+      assert.notEqual(stopped.choice, "continue");
+    }
+  }),
+
   test("mcp permission wraps route-workflow and does not add a catalog", () => {
     const mcp = decidePermission({
       classId: "mcp",

@@ -15,7 +15,7 @@ mod policy;
 mod router;
 mod transport;
 
-pub use calls::tool_call;
+pub use calls::{envelope_matches, missing_key_envelope, tool_call};
 pub use catalog::{schema_dump_json, tiny_catalog_json};
 pub use check::{
     check_envelope, deterministic_flags, file_kind, offline_check_json, parse_unified_diff, run_offline_check,
@@ -584,6 +584,33 @@ mod tests {
         let call = tool_call();
         assert_eq!(call.transport, "facet");
         assert!(!call.initiated);
+    }
+
+    #[test]
+    fn g1_missing_key_envelope_matches_calls_mjs() {
+        let body = missing_key_envelope();
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/jev-router/testdata/calls/missing-key.json");
+        let recorded = std::fs::read(&path).unwrap();
+        assert_eq!(body.as_bytes(), recorded.as_slice());
+        let recorded = std::str::from_utf8(&recorded).unwrap();
+        assert!(envelope_matches(&body, recorded));
+        assert!(body.contains("\"facetVersion\":\"2.1.3\""));
+        assert!(body.contains("\"transport\":\"facet\""));
+        assert!(body.contains("\"initiated\":false"));
+        assert!(body.contains("\"autoPromote\":false"));
+        assert!(body.contains("\"autoAllow\":false"));
+        assert!(body.contains("\"mode\":\"shadow\""));
+        assert!(body.contains("\"honor\":false"));
+        assert!(body.contains("\"reason\":\"missing_key\""));
+        assert!(!body.contains("\"label\":\"allow\""));
+        assert!(!body.contains("\"choice\":\"allow\""));
+        assert!(!body.contains("F454"));
+        let mut paraphrased = body.clone().into_bytes();
+        let index = paraphrased.iter().position(|byte| *byte == b'f').unwrap();
+        paraphrased[index] = b'g';
+        let paraphrased = String::from_utf8(paraphrased).unwrap();
+        assert!(!envelope_matches(&paraphrased, recorded));
     }
 
     fn router_golden(name: &str) -> String {

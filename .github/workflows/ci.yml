@@ -21,7 +21,7 @@ jobs:
           - system: aarch64-linux
             os: ubuntu-latest
             skip: true
-            skip_reason: "No aarch64-linux GitHub-hosted runner in this workflow. Pin exists (omp-linux-arm64); build on mesh/Bot. Not a pretend green build."
+            skip_reason: "No aarch64-linux GitHub-hosted runner in this workflow. Pin exists (omp-linux-arm64). Not a pretend green build."
             build_omapi_pin: false
           - system: aarch64-darwin
             os: ubuntu-latest

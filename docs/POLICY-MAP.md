@@ -140,7 +140,7 @@ row does not fire until this permission surface has been re-checked. See [Permis
 honoring, a typed-call stop / escalate denies even if `JEV_MODE` is shadow,
 and a typed-call continue does not override a loop stop or a permission stop.
 The hook still emits `defer` or `deny`, never `allow`. Default is shadow.
-Castle Grok hooks leave MCP on ask until this surface is merged. After merge,
+Grok hooks leave MCP on ask until this surface is merged. After merge,
 MCP stays ask until an operator exports `JEV_TYPED_CALL_MODE=active`. Do not
 set that variable in the hook JSON or the flake.
 
@@ -291,7 +291,7 @@ Key absent forces this surface to shadow, including when
 ### Flip
 
 Do not export this until you mean to honor MCP tool calls. Shadow is the
-default. Castle Grok hooks leave MCP on ask until this surface is merged.
+default. Grok hooks leave MCP on ask until this surface is merged.
 After merge, still leave the variable unset unless you want the gate to deny
 or continue from `calls`.
 

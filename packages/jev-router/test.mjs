@@ -624,7 +624,7 @@ const cases = [
     assert.match(doc, /JEV_TYPED_CALL_MODE/);
     assert.match(doc, /tool_call/);
     assert.match(doc, /top-X/);
-    assert.match(doc, /Castle Grok hooks leave MCP on ask until this surface is merged/);
+    assert.match(doc, /Grok hooks leave MCP on ask until this surface is merged/);
   }),
 
   test("JEV_BYPASS=true stamps shell; yes does not bypass; check ignores bypass", () => {

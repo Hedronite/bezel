@@ -142,9 +142,21 @@
             got="$(cat "$outf")"
             echo "$got" | grep -q 'overlay=1'
             echo "$got" | grep -q -- '--version'
-            # Launch is quiet. The mark banner is deleted, not hidden on a non-TTY.
-            if grep -F 'oma on' "$outf" "$errf" "$wrap" || grep -F 'omapi-mark' "$outf" "$errf" "$wrap"; then
+            # Launch is quiet. No splash mark and no startup flourish on stdout or stderr.
+            if [ -s "$errf" ]; then
+              echo "omapi launch wrote to stderr:" >&2
+              cat "$errf" >&2
+              exit 1
+            fi
+            if grep -F 'oma on' "$outf" "$wrap" || grep -F 'omapi-mark' "$outf" "$wrap"; then
               echo "omapi launch printed a splash banner" >&2
+              exit 1
+            fi
+            errp="$(mktemp)"
+            OMAPI_PLANES=1 OMP_BIN="$fake" "$wrap" --version >/dev/null 2>"$errp"
+            if [ -s "$errp" ]; then
+              echo "omapi launch wrote to stderr with the pre-exec filter on:" >&2
+              cat "$errp" >&2
               exit 1
             fi
 

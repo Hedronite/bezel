@@ -475,6 +475,10 @@ mod tests {
         let (deny_code, denied) = hook_command(&raw, &[("JEV_MODE", "active")]);
         assert_eq!(deny_code, 2);
         assert!(denied.contains("\"decision\":\"deny\""));
+        assert!(denied.contains(
+            "jev choice=escalate gate=hold policy=omapi-loop-stop-policy@1 detail=missing_key question=Is the judge available for this action?"
+        ));
+        assert!(!denied.contains("jev uncertain"));
         assert!(denied.ends_with('\n'));
     }
 

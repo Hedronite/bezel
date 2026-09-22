@@ -15,7 +15,7 @@ mod policy;
 mod router;
 mod transport;
 
-pub use calls::{envelope_matches, missing_key_envelope, tool_call};
+pub use calls::{envelope_matches, hard_stop_json, missing_key_envelope, tool_call, HardStopTool};
 pub use catalog::{schema_dump_json, tiny_catalog_json};
 pub use check::{
     check_envelope, deterministic_flags, file_kind, offline_check_json, parse_unified_diff, run_offline_check,
@@ -611,6 +611,82 @@ mod tests {
         paraphrased[index] = b'g';
         let paraphrased = String::from_utf8(paraphrased).unwrap();
         assert!(!envelope_matches(&paraphrased, recorded));
+    }
+
+    fn calls_golden(name: &str) -> Vec<u8> {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/jev-router/testdata/calls")
+            .join(name);
+        std::fs::read(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()))
+    }
+
+    #[test]
+    fn g2_hard_stops_match_calls_mjs_and_are_not_promoted() {
+        let next = HardStopTool {
+            name: "linear__list_issues",
+            description: "List issues",
+            effect: "read",
+        };
+        let cases = [
+            (
+                "invalid-fn.json",
+                "linear.save",
+                HardStopTool {
+                    name: "linear.save",
+                    description: "Bad name",
+                    effect: "read",
+                },
+                "F452",
+            ),
+            (
+                "missing-effect.json",
+                "bare__tool",
+                HardStopTool {
+                    name: "bare__tool",
+                    description: "No effect",
+                    effect: "",
+                },
+                "F456",
+            ),
+            (
+                "invalid-effect.json",
+                "odd__tool",
+                HardStopTool {
+                    name: "odd__tool",
+                    description: "Odd",
+                    effect: "not-an-effect",
+                },
+                "F456",
+            ),
+            (
+                "payment.json",
+                "pay__now",
+                HardStopTool {
+                    name: "pay__now",
+                    description: "Pay",
+                    effect: "payment",
+                },
+                "F454",
+            ),
+        ];
+        for (file, winner, tool, code) in cases {
+            let body = hard_stop_json(
+                winner,
+                &[tool, next],
+                &[(winner, 0.8), ("linear__list_issues", 0.2)],
+            );
+            let recorded = calls_golden(file);
+            assert_eq!(body.as_bytes(), recorded.as_slice(), "{file}");
+            assert!(body.contains(&format!("\"code\":\"{code}\"")), "{file}");
+            assert!(body.contains("\"best\":null"), "{file}");
+            assert!(body.contains("\"autoPromote\":false"), "{file}");
+            assert!(body.contains("\"mapped\":\"stop\""), "{file}");
+            assert!(body.contains("\"choice\":\"stop\""), "{file}");
+            assert!(!body.contains("\"name\":\"linear__list_issues\",\"outcome\""));
+            let mut paraphrased = body.into_bytes();
+            paraphrased[0] = b' ';
+            assert_ne!(paraphrased, recorded, "{file}");
+        }
     }
 
     fn router_golden(name: &str) -> String {

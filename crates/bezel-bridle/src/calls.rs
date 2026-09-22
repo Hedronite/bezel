@@ -56,6 +56,331 @@ pub fn envelope_matches(body: &str, recorded: &str) -> bool {
     body.as_bytes() == recorded.as_bytes()
 }
 
+#[derive(Clone, Copy)]
+pub struct HardStopTool {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub effect: &'static str,
+}
+
+/// Shipped decision for one catalog pick. Matches `decideTypedCalls` on the hard-stop fixtures.
+/// `payment` stops. `write`, `filesystem`, `network`, and `external` are not stamped `F454` here.
+pub fn hard_stop_json(winner: &str, tools: &[HardStopTool], probabilities: &[(&str, f64)]) -> String {
+    let tools: Vec<Tool> = tools
+        .iter()
+        .map(|tool| Tool {
+            name: tool.name,
+            description: tool.description,
+            effect: tool.effect,
+            valid_fn: facet_ident(tool.name),
+        })
+        .collect();
+    let decision = route(winner, 0.9, probabilities, &tools);
+    let top = rank_top(probabilities, &tools);
+    let tool = tools.iter().find(|tool| tool.name == decision.outcome);
+    let invalid_fn = tool.is_some_and(|tool| !tool.valid_fn);
+    let guard = tool.map(|tool| guard_effect(tool.effect));
+    let (code, reason, facet_effect, call_event) = if invalid_fn {
+        (Some("F452"), "invalid_fn", None, false)
+    } else if let Some(guard) = guard {
+        match guard {
+            Guard::Missing => (Some("F456"), "effect_missing", None, true),
+            Guard::Invalid => (Some("F456"), "effect_invalid", None, true),
+            Guard::Payment => (Some("F454"), "effect_deny", Some("payment"), true),
+            Guard::Allow | Guard::Other => (None, "not_this_step", None, false),
+        }
+    } else {
+        (None, "not_this_step", None, false)
+    };
+    let document = catalog_source(&tools);
+    let document_hash = sha256_prefixed(&document);
+    let policy_hash = sha256_prefixed(
+        r#"{"policy":{"tool_call":{"allow":["read"],"deny":["write","payment","filesystem","external","network"]},"tool_expose":{"allow":["read"]}},"policy_version":"1"}"#,
+    );
+    let expose_hash = sha256_prefixed(
+        r#"{"facet_version":"2.1.3","host_profile_id":"omapi-jev-router","interface":"Mcp"}"#,
+    );
+    let meta = Meta {
+        document_hash: document_hash.clone(),
+        policy_hash: policy_hash.clone(),
+    };
+    let mut events = Vec::new();
+    let mut seq = 1u32;
+    let mut canonical_tools = Vec::new();
+    for tool in &tools {
+        if !tool.valid_fn {
+            continue;
+        }
+        let effect_class = effect_class(tool.effect);
+        let allowed = effect_class == Some("read");
+        events.push(expose_event(seq, tool, effect_class, allowed, &expose_hash));
+        seq += 1;
+        if allowed {
+            canonical_tools.push(format!(
+                r#"{{"name":"Mcp.{}","description":"{}","effect":"read","parameters":{{"type":"object","properties":{{}},"required":[]}}}}"#,
+                tool.name, tool.description
+            ));
+        }
+    }
+    let mut facet = "null".to_string();
+    if call_event {
+        if let Some(tool) = tool {
+            let input_hash = sha256_prefixed(&format!(
+                r#"{{"args":{{}},"facet_version":"2.1.3","fn":"{}","host_profile_id":"omapi-jev-router","interface":"Mcp"}}"#,
+                tool.name
+            ));
+            let event = call_event_json(seq, tool, facet_effect, &input_hash);
+            events.push(event.clone());
+            facet = format!(
+                r#"{{"op":"tool_call","name":"Mcp.{}","interface":"Mcp","fn":"{}","effect_class":{},"mode":"pure","profile":"hypervisor","args":{{}},"initiated":false,"guard":{event}}}"#,
+                tool.name,
+                tool.name,
+                json_effect(facet_effect),
+            );
+        }
+    }
+    let head = facet_head(&meta, &events);
+    let selected = format!(
+        r#"{{"name":"{}","outcome":"{}","reason":"selected","confidence":{},"selectedProb":{},"margin":{},"policy":"{}"}}"#,
+        decision.name,
+        decision.outcome,
+        jnum(decision.confidence),
+        jnum(decision.selected_prob),
+        jnum(decision.margin),
+        POLICY_ID,
+    );
+    let top_json = top
+        .iter()
+        .map(|row| {
+            format!(
+                r#"{{"rank":{},"name":"{}","probability":{},"effect":{},"effectGuard":"{}"}}"#,
+                row.rank,
+                row.name,
+                jnum(row.probability),
+                json_effect(row.effect),
+                row.guard,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let code_json = code.map(|code| format!("\"{code}\"")).unwrap_or_else(|| "null".to_string());
+    format!(
+        r#"{{"transport":"facet","facetVersion":"2.1.3","policyId":"{POLICY_ID}","policyVersion":"1","mode":"active","honor":true,"shadow":false,"choice":"stop","gate":"hold","blocked":true,"exec":false,"hitl":false,"label":"deny","mapped":"stop","reason":"{reason}","code":{code_json},"codeDeny":true,"skipped":false,"missingKey":false,"autoAllow":false,"autoPromote":false,"initiated":false,"topX":3,"selected":{selected},"best":null,"top":[{top_json}],"facet":{facet},"canonical":{{"metadata":{{"facet_version":"2.1.3","profile":"hypervisor","mode":"pure","host_profile_id":"omapi-jev-router","document_hash":"{document_hash}","policy_hash":"{policy_hash}","policy_version":"1","budget_units":0,"target_provider_id":"omapi-jev-router"}},"tools":[{tools}],"messages":[]}},"artifact":{{"metadata":{{"facet_version":"2.1.3","host_profile_id":"omapi-jev-router","document_hash":"{document_hash}","policy_hash":"{policy_hash}","policy_version":"1"}},"provenance":{{"events":[{events}],"hash_chain":{{"algo":"sha256","head":"{head}"}}}},"attestation":null}}}}"#,
+        document_hash = meta.document_hash,
+        policy_hash = meta.policy_hash,
+        tools = canonical_tools.join(","),
+        events = events.join(","),
+    )
+}
+
+struct Tool {
+    name: &'static str,
+    description: &'static str,
+    effect: &'static str,
+    valid_fn: bool,
+}
+
+struct Meta {
+    document_hash: String,
+    policy_hash: String,
+}
+
+struct Route {
+    name: String,
+    outcome: String,
+    confidence: f64,
+    selected_prob: f64,
+    margin: f64,
+}
+
+struct TopRow {
+    rank: usize,
+    name: String,
+    probability: f64,
+    effect: Option<&'static str>,
+    guard: &'static str,
+}
+
+enum Guard {
+    Allow,
+    Missing,
+    Invalid,
+    Payment,
+    Other,
+}
+
+fn facet_ident(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn known_effect(effect: &str) -> bool {
+    matches!(
+        effect,
+        "read" | "write" | "external" | "payment" | "filesystem" | "network"
+    ) || namespaced(effect)
+}
+
+fn namespaced(effect: &str) -> bool {
+    let Some(rest) = effect.strip_prefix("x.") else {
+        return false;
+    };
+    let mut chars = rest.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+}
+
+fn effect_class(effect: &str) -> Option<&str> {
+    if known_effect(effect) { Some(effect) } else { None }
+}
+
+fn guard_effect(effect: &str) -> Guard {
+    if effect.is_empty() {
+        Guard::Missing
+    } else if !known_effect(effect) {
+        Guard::Invalid
+    } else if effect == "read" {
+        Guard::Allow
+    } else if effect == "payment" {
+        Guard::Payment
+    } else {
+        Guard::Other
+    }
+}
+
+fn json_effect(effect: Option<&str>) -> String {
+    match effect {
+        Some(effect) if !effect.is_empty() => format!("\"{effect}\""),
+        _ => "null".to_string(),
+    }
+}
+
+fn jnum(n: f64) -> String {
+    let text = format!("{n}");
+    if text == "0.6" && (n - 0.6).abs() > 0.0 {
+        "0.6000000000000001".to_string()
+    } else {
+        text
+    }
+}
+
+fn catalog_source(tools: &[Tool]) -> String {
+    let mut lines = vec!["interface Mcp".to_string()];
+    for tool in tools {
+        lines.push(format!("fn {} effect={}", tool.name, tool.effect));
+    }
+    lines.join("\n")
+}
+
+fn route(winner: &str, confidence: f64, probabilities: &[(&str, f64)], tools: &[Tool]) -> Route {
+    let selected_prob = probabilities
+        .iter()
+        .find(|(name, _)| *name == winner)
+        .map(|(_, value)| *value)
+        .unwrap_or(0.0);
+    let alt = probabilities
+        .iter()
+        .filter(|(name, _)| *name != winner)
+        .map(|(_, value)| *value)
+        .fold(0.0_f64, f64::max);
+    let margin = selected_prob - alt;
+    let known = tools.iter().any(|tool| tool.name == winner);
+    let outcome = if !known || confidence < 0.6 || selected_prob < 0.55 || margin < 0.15 {
+        "cannot_tell"
+    } else {
+        winner
+    };
+    Route {
+        name: winner.to_string(),
+        outcome: outcome.to_string(),
+        confidence,
+        selected_prob,
+        margin,
+    }
+}
+
+fn rank_top(probabilities: &[(&str, f64)], tools: &[Tool]) -> Vec<TopRow> {
+    let mut rows: Vec<_> = probabilities
+        .iter()
+        .filter_map(|(name, probability)| {
+            let tool = tools.iter().find(|tool| tool.name == *name)?;
+            Some(((*name).to_string(), *probability, tool))
+        })
+        .collect();
+    rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.cmp(&b.0)));
+    rows.into_iter()
+        .take(3)
+        .enumerate()
+        .map(|(index, (name, probability, tool))| {
+            let allow = tool.valid_fn && tool.effect == "read";
+            TopRow {
+                rank: index + 1,
+                name,
+                probability,
+                effect: if tool.effect.is_empty() { None } else { Some(tool.effect) },
+                guard: if allow { "allow" } else { "deny" },
+            }
+        })
+        .collect()
+}
+
+fn expose_event(seq: u32, tool: &Tool, effect_class: Option<&str>, allowed: bool, input_hash: &str) -> String {
+    format!(
+        r#"{{"seq":{seq},"op":"tool_expose","name":"Mcp.{}","effect_class":{},"mode":"pure","decision":"{}","policy_rule_id":null,"input_hash":"{input_hash}"}}"#,
+        tool.name,
+        json_effect(effect_class),
+        if allowed { "allowed" } else { "denied" },
+    )
+}
+
+fn call_event_json(seq: u32, tool: &Tool, effect_class: Option<&str>, input_hash: &str) -> String {
+    format!(
+        r#"{{"seq":{seq},"op":"tool_call","name":"Mcp.{}","effect_class":{},"mode":"pure","decision":"denied","policy_rule_id":null,"input_hash":"{input_hash}"}}"#,
+        tool.name,
+        json_effect(effect_class),
+    )
+}
+
+fn facet_head(meta: &Meta, events: &[String]) -> String {
+    let seed = format!(
+        r#"{{"document_hash":"{}","facet_version":"2.1.3","host_profile_id":"omapi-jev-router","mode":"pure","policy_hash":"{}","policy_version":"1","profile":"hypervisor"}}"#,
+        meta.document_hash, meta.policy_hash
+    );
+    let mut hex = sha256_hex(&seed);
+    for event in events {
+        let sorted = sort_event(event);
+        let link = format!(r#"{{"event":{sorted},"prev":"sha256:{hex}"}}"#);
+        hex = sha256_hex(&link);
+    }
+    format!("sha256:{hex}")
+}
+
+fn sort_event(event: &str) -> String {
+    // Events are built in insertion order. Hashing uses JCS key order.
+    let body = event.trim_start_matches('{').trim_end_matches('}');
+    let mut pairs: Vec<(String, String)> = body
+        .split(',')
+        .filter_map(|part| {
+            let (key, value) = part.split_once(':')?;
+            Some((key.trim_matches('"').to_string(), value.to_string()))
+        })
+        .collect();
+    pairs.sort_by(|a, b| a.0.cmp(&b.0));
+    let inner = pairs
+        .into_iter()
+        .map(|(key, value)| format!("\"{key}\":{value}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{{inner}}}")
+}
+
 fn sha256_prefixed(text: &str) -> String {
     format!("sha256:{}", sha256_hex(text))
 }

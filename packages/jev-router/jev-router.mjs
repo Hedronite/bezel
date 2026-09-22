@@ -48,7 +48,8 @@
  * after the available-gate (diff present?). Log only — never blocks.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { choice, noul, TypeSafeClient } from "@typesafe-ai/sdk";
 import {
   applyCallsVerdict,
@@ -67,7 +68,9 @@ import {
   applyPermissionVerdict,
   clipToolInput,
   decidePermission,
+  effectFromHook,
   permissionBypass,
+  permissionFromHook,
   permissionSurface,
   shellPermissionQuestion,
   toolInputPresent,
@@ -300,19 +303,32 @@ function buildCalls(extra = {}) {
 }
 
 function permissionDecision(extra = {}) {
-  const classId = matchedClassId();
-  if (!permissionSurface(classId)) return null;
-  // Write evidence is the clipped proposed edit, not the git worktree.
-  const write = classId === "write" ? parseWriteToolWire(args.toolInput) : { diffText: "", path: "" };
-  return decidePermission({
-    classId,
-    requestedMode: process.env.JEV_PERMISSION_MODE,
-    hasKey,
-    contentPresent: classId === "shell" && toolInputPresent(args.toolInput),
-    diffText: write.diffText,
-    path: write.path,
-    ...extra,
-  });
+  const tools = loadedCatalog && loadedCatalog.catalog && Array.isArray(loadedCatalog.catalog.tools)
+    ? loadedCatalog.catalog.tools
+    : [];
+  return permissionFromHook(
+    {
+      toolName: args.toolName,
+      effect: effectFromHook(args.toolName, args.toolInput, tools),
+      toolInput: args.toolInput,
+      toolClass: args.toolClass,
+    },
+    {
+      ...extra,
+      requestedMode: process.env.JEV_PERMISSION_MODE,
+      hasKey,
+    },
+  );
+}
+
+function runningAsCli() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
 }
 
 function withPermission(payload, extra = {}) {
@@ -539,7 +555,7 @@ if (args.check) {
   }
 }
 
-if (!hasKey) {
+if (runningAsCli() && !hasKey) {
   if (mode === "shadow") {
     log("TYPESAFE_API_KEY unset — shadow continues unclassified (does not block)");
     const loop = missingKeyLoop(mode, intent, stepDigest);
@@ -591,6 +607,7 @@ if (!hasKey) {
   });
 }
 
+if (runningAsCli() && hasKey) {
 const client = new TypeSafeClient();
 const classId = matchedClassId();
 const askShellPermission = classId === "shell" && toolInputPresent(args.toolInput);
@@ -765,4 +782,5 @@ try {
     },
     { failed: true },
   );
+}
 }

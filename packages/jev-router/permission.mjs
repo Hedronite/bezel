@@ -21,11 +21,13 @@
  */
 
 import { deterministicFlags, fileKind, parseUnifiedDiff } from "./check.mjs";
+import { parseWriteToolWire } from "./facts.mjs";
 import {
   CHECK_POLICY,
   LOOP_STOP_POLICY,
   ROUTING_POLICY,
   applyLoopStopThresholds,
+  pretoolStamp,
 } from "./policy.mjs";
 
 export const PERMISSION_LABELS = ["allow", "deny", "ask"];
@@ -467,6 +469,60 @@ export function decidePermission({
     label,
     confidence,
     probabilities,
+  });
+}
+
+/**
+ * Effect carried by the hook record, then the hook catalog.
+ * A command string is not a tool record.
+ */
+export function effectFromHook(toolName, toolInput, tools = []) {
+  if (toolInput && typeof toolInput === "object" && !Array.isArray(toolInput) && typeof toolInput.effect === "string") {
+    return toolInput.effect;
+  }
+  if (typeof toolInput === "string" && toolInput.trim().startsWith("{")) {
+    try {
+      const parsed = JSON.parse(toolInput);
+      if (parsed && typeof parsed.effect === "string") return parsed.effect;
+    } catch {
+      // Shell text is not a tool record.
+    }
+  }
+  const list = Array.isArray(tools) ? tools : [];
+  const row = list.find((tool) => tool && tool.name === toolName);
+  return row && typeof row.effect === "string" ? row.effect : "";
+}
+
+/**
+ * Hook record → decidePermission. toolName and effect come from the hook,
+ * not from the extra judge fields. Dropping toolName leaves a read-shaped
+ * MCP name on the workflow outcome.
+ */
+export function permissionFromHook(hook = {}, extra = {}) {
+  const toolName = hook && hook.toolName ? String(hook.toolName) : "";
+  const effect = hook && hook.effect ? String(hook.effect) : "";
+  const toolInput = hook && hook.toolInput !== undefined ? hook.toolInput : "";
+  const stamp = pretoolStamp({ toolName, toolClass: hook && hook.toolClass ? hook.toolClass : "" });
+  const classId = stamp && stamp.matched ? stamp.class : null;
+  if (!permissionSurface(classId)) return null;
+  const write = classId === "write" ? parseWriteToolWire(toolInput) : { diffText: "", path: "" };
+  return decidePermission({
+    classId,
+    requestedMode: extra.requestedMode != null ? extra.requestedMode : "shadow",
+    hasKey: extra.hasKey === true,
+    contentPresent: classId === "shell" && toolInputPresent(toolInput),
+    diffText: write.diffText,
+    path: write.path,
+    label: extra.label ?? null,
+    confidence: extra.confidence ?? 0,
+    probabilities: extra.probabilities ?? null,
+    routingOutcome: extra.routingOutcome ?? null,
+    typed: extra.typed ?? null,
+    flags: extra.flags ?? null,
+    concern: extra.concern ?? null,
+    failed: extra.failed === true,
+    toolName,
+    effect,
   });
 }
 

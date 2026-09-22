@@ -1,7 +1,8 @@
 //! Bridle core. The harness stays the harness. This crate decides.
 //!
-//! Pure core: `policy`, `check`, `permission`, `loop_stop`. No network. No client.
+//! Only `cli` may construct a client. This gate replays recorded `systemOne` bytes.
 
+mod calls;
 mod catalog;
 mod check;
 mod cli;
@@ -9,13 +10,15 @@ mod harness;
 mod loop_stop;
 mod permission;
 mod policy;
+mod transport;
 
+pub use calls::tool_call;
 pub use catalog::{schema_dump_json, tiny_catalog_json};
 pub use check::{
     check_envelope, deterministic_flags, file_kind, offline_check_json, parse_unified_diff, run_offline_check,
     write_flags, CheckReport, Hunk, OfflineCheck,
 };
-pub use cli::run as cli_run;
+pub use cli::{fixture_client, run as cli_run, LIVE_COMMAND, LIVE_ON};
 pub use harness::{decide_hook, hook_on_text, hook_stdout, modes_from_env, parse_hook_event, HookEvent, Modes};
 pub use loop_stop::{apply_loop_stop_thresholds, LoopStopDecision};
 pub use permission::{active_hook, write_from_flags, WriteVerdict};
@@ -448,5 +451,51 @@ mod tests {
         assert!(skip.contains("\"workflow\":\"check\""));
         assert!(!skip.contains("\"decision\":\"allow\""));
         assert!(!skip.contains("\"approval\":true"));
+    }
+
+    #[test]
+    fn g4_fixture_replays_system_one_bytes_and_only_cli_builds_a_client() {
+        assert!(!LIVE_ON);
+        let live = ["facet", "request", "run"].join(" ");
+        assert!(LIVE_COMMAND.starts_with(&live));
+        let client = fixture_client();
+        for name in ["check-judge.json", "shadow-workflow.json", "main-gate.json"] {
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../packages/jev-router/testdata/system-one")
+                .join(name);
+            let recorded = std::fs::read(&path).expect(name);
+            let replayed = client.system_one(name).expect(name);
+            assert_eq!(replayed, recorded, "{name}");
+            assert_eq!(replayed.last().copied(), Some(b'\n'));
+            let mut paraphrased = recorded.clone();
+            paraphrased.pop();
+            assert_ne!(replayed, paraphrased, "{name}");
+        }
+        assert!(client.system_one("missing.json").is_err());
+
+        let call = tool_call();
+        assert_eq!(call.transport, "facet");
+        assert!(!call.initiated);
+        assert_eq!(call.op, "tool_call");
+        assert_eq!(call.facet_version, "2.1.3");
+
+        let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+        for entry in std::fs::read_dir(&src).expect("src") {
+            let path = entry.expect("entry").path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("read");
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let typesafe = ["TypeSafe", "Client"].join("");
+            let sdk = ["@typesafe-ai", "sdk"].join("/");
+            let ctor = ["construct", "client"].join("_");
+            assert!(!text.contains(&typesafe), "{name}");
+            assert!(!text.contains(&sdk), "{name}");
+            if name != "cli.rs" {
+                assert!(!text.contains(&ctor), "{name}");
+                assert!(!text.contains(&live), "{name}");
+            }
+        }
     }
 }

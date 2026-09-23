@@ -13,6 +13,18 @@ if [ ! -f "$proof" ]; then
   exit 2
 fi
 
+for law in \
+  shadow_cannot_set_auto_allow \
+  code_deny_never_calls_transport \
+  empty_findings_are_not_approval \
+  state_rejects_secret_key
+do
+  if ! grep -q "$law" "$proof"; then
+    printf 'bend-gate: proof does not name %s\n' "$law" >&2
+    exit 1
+  fi
+done
+
 dir=$(CDPATH= cd -- "$(dirname "$proof")" && pwd)
 name=$(basename "$proof")
 cd "$dir"

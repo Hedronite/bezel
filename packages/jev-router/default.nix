@@ -68,7 +68,8 @@ stdenv.mkDerivation {
     tar -xzf ${sdk} -C $out/lib/jev-router/node_modules/@typesafe-ai/sdk --strip-components=1
 
     mkdir -p $out/bin
-    makeWrapper ${lib.getExe nodejs} $out/bin/jev-router \
+    # Live commands stay on the JavaScript client. Offline commands run the Rust binary.
+    makeWrapper ${lib.getExe nodejs} $out/bin/jev-router-node \
       --add-flags "$out/lib/jev-router/jev-router.mjs" \
       --prefix NODE_PATH : "$out/lib/jev-router/node_modules"
     # Secrets: never --set TYPESAFE_API_KEY / getEnv at build.
@@ -77,10 +78,62 @@ stdenv.mkDerivation {
       echo "bezel-bridle must be the Rust binary" >&2
       exit 1
     fi
-    empty=$(mktemp)
-    "$out/bin/bezel-bridle" --check --diff-file ${repoRoot}/packages/jev-router/testdata/empty.diff >"$empty"
-    grep -q '"approval":false' "$empty"
-    grep -q '"status":"no_diff"' "$empty"
+    cat > $out/bin/jev-router << EOF
+#!/bin/sh
+for arg in "\$@"; do
+  case "\$arg" in
+    hook|--catalog|--schema|--schema-dump|--check)
+      exec $out/bin/bezel-bridle "\$@"
+      ;;
+  esac
+done
+exec $out/bin/jev-router-node "\$@"
+EOF
+    chmod 755 $out/bin/jev-router
+
+    export NODE_PATH=$out/lib/jev-router/node_modules
+    export JEV_MODE=shadow
+    unset TYPESAFE_API_KEY || true
+    fixtures=${repoRoot}/packages/jev-router/testdata
+    match_node() {
+      set +e
+      ${lib.getExe nodejs} $out/lib/jev-router/jev-router.mjs "$@" > node.out
+      node_code=$?
+      $out/bin/jev-router "$@" > rust.out
+      rust_code=$?
+      set -e
+      if [ "$node_code" != "$rust_code" ] || ! cmp -s node.out rust.out; then
+        echo "jev-router $* does not match node ($node_code vs $rust_code)" >&2
+        echo "--- node ---" >&2
+        cat node.out >&2
+        echo "--- rust ---" >&2
+        cat rust.out >&2
+        exit 1
+      fi
+    }
+    match_node --catalog
+    match_node --schema Bash
+    match_node --schema
+    match_node --check --diff-file "$fixtures/empty.diff"
+    match_node --check --diff-file "$fixtures/skip-marker.diff"
+    set +e
+    ${lib.getExe nodejs} $out/lib/jev-router/jev-router.mjs hook < "$fixtures/grok-pretool-bash.json" > node-hook.out
+    node_hook=$?
+    $out/bin/jev-router hook < "$fixtures/grok-pretool-bash.json" > rust-hook.out
+    rust_hook=$?
+    set -e
+    if [ "$node_hook" != "$rust_hook" ] || ! cmp -s node-hook.out rust-hook.out; then
+      echo "jev-router hook does not match node ($node_hook vs $rust_hook)" >&2
+      echo "--- node ---" >&2
+      cat node-hook.out >&2
+      echo "--- rust ---" >&2
+      cat rust-hook.out >&2
+      exit 1
+    fi
+    if grep -q '"decision":"allow"' rust.out rust-hook.out; then
+      echo "offline jev-router must not allow" >&2
+      exit 1
+    fi
 
     runHook postInstall
   '';

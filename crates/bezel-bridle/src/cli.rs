@@ -38,6 +38,9 @@ pub fn fixture_client() -> Client {
 }
 
 pub fn run(args: &[String]) -> (i32, String) {
+    if args.first().map(String::as_str) == Some("--version") && args.len() == 1 {
+        return (0, format!("bezel-bridle {}\n", env!("CARGO_PKG_VERSION")));
+    }
     if args.first().map(String::as_str) == Some("hook") {
         let mut stdin = String::new();
         let _ = std::io::stdin().read_to_string(&mut stdin);
@@ -72,6 +75,18 @@ pub fn run(args: &[String]) -> (i32, String) {
         return (0, format!("{}\n", offline_check_json(&report)));
     }
     (2, String::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run;
+
+    #[test]
+    fn version_matches_package() {
+        let (code, out) = run(&["--version".into()]);
+        assert_eq!(code, 0);
+        assert_eq!(out, format!("bezel-bridle {}\n", env!("CARGO_PKG_VERSION")));
+    }
 }
 
 fn diff_argument(args: &[String]) -> String {

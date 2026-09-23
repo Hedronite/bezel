@@ -1,6 +1,6 @@
 {
   "name": "jev-router",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Router-only Jev Choice gate + loop-stop/escalate + shadow permission catalogs + tiny tool catalog + shadow typed calls + Grok Build harness + shadow check. No secrets in this package.",

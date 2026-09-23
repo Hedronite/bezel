@@ -84,6 +84,6 @@ fn schema_json(tool_name: &str, class_id: &str) -> Option<String> {
         }
         _ => return None,
     };
-    let (head, tail) = body.split_once('{')?;
-    Some(format!(r#"{head}{{"title":"{tool_name}",{tail}"#))
+    let body = body.strip_suffix('}')?;
+    Some(format!(r#"{body},"title":"{tool_name}"}}"#))
 }

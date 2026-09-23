@@ -127,7 +127,8 @@ mod tests {
         assert!(!report.approval);
         assert!(report.empty_findings_are_not_approval);
         let law = laws_sentence();
-        assert!(law.contains("Empty findings are not approval."));
+        assert!(law.contains("law empty_findings_are_not_approval:"));
+        assert!(law.contains("{approval(Empty{}) == No{} : Approval}"));
     }
 
     #[test]

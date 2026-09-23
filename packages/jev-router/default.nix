@@ -116,10 +116,21 @@ EOF
     match_node --schema
     match_node --check --diff-file "$fixtures/empty.diff"
     match_node --check --diff-file "$fixtures/skip-marker.diff"
-    JEV_MODE=shadow $out/bin/jev-router hook < "$fixtures/grok-pretool-bash.json" > hook.out
-    printf '%s\n' '{"decision":"defer","reason":"shadow"}' > hook.exp
-    cmp -s hook.out hook.exp
-    if grep -q '"decision":"allow"' rust.out hook.out; then
+    set +e
+    ${lib.getExe nodejs} $out/lib/jev-router/jev-router.mjs hook < "$fixtures/grok-pretool-bash.json" > node-hook.out
+    node_hook=$?
+    $out/bin/jev-router hook < "$fixtures/grok-pretool-bash.json" > rust-hook.out
+    rust_hook=$?
+    set -e
+    if [ "$node_hook" != "$rust_hook" ] || ! cmp -s node-hook.out rust-hook.out; then
+      echo "jev-router hook does not match node ($node_hook vs $rust_hook)" >&2
+      echo "--- node ---" >&2
+      cat node-hook.out >&2
+      echo "--- rust ---" >&2
+      cat rust-hook.out >&2
+      exit 1
+    fi
+    if grep -q '"decision":"allow"' rust.out rust-hook.out; then
       echo "offline jev-router must not allow" >&2
       exit 1
     fi

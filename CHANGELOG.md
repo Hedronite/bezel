@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+Compatible patch. `v0.2.0` is not moved.
+
+- `scripts/bend-gate.sh` runs `bend` on the shipped proof and exits non-zero when a law name is missing.
+- The Rust public API is unchanged.
+
 ## 0.2.0
 
 Breaking on 0.x, per Cargo's rule. `0.1.0` is unchanged on crates.io and the git tag `v0.1.0` is not moved.

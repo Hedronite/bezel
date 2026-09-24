@@ -24,7 +24,7 @@ pub use check::{
     check_envelope, deterministic_flags, file_kind, offline_check_json, parse_unified_diff, run_offline_check,
     write_flags, CheckReport, Hunk, OfflineCheck,
 };
-pub use cli::{fixture_client, run as cli_run, LIVE_COMMAND, LIVE_ON};
+pub use cli::{fixture_client, live_transport_argv, run as cli_run, LIVE_COMMAND, LIVE_ON};
 pub use facts::{clip_to_max_hunk_chars, gather, gather_diff, write_tool_wire, Edit, GatherOpts, WriteBody};
 pub use judge::{matches_recorded, recorded_answer, CHECK_JUDGE, MAIN_GATE, SHADOW_WORKFLOW};
 pub use harness::{
@@ -1150,8 +1150,11 @@ mod tests {
     #[test]
     fn g4_fixture_replays_system_one_bytes_and_only_cli_builds_a_client() {
         assert!(!LIVE_ON);
-        let live = ["facet", "request", "run"].join(" ");
-        assert!(LIVE_COMMAND.starts_with(&live));
+        assert_eq!(
+            live_transport_argv(),
+            ["facet", "request", "run", "--environment", "typesafe", "--no-record"]
+        );
+        assert_eq!(live_transport_argv().join(" "), LIVE_COMMAND);
         let client = fixture_client();
         for name in ["check-judge.json", "shadow-workflow.json", "main-gate.json"] {
             let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1161,9 +1164,11 @@ mod tests {
             let replayed = client.system_one(name).expect(name);
             assert_eq!(replayed, recorded, "{name}");
             assert!(matches_recorded(&replayed, &recorded));
-            let mut paraphrased = recorded.clone();
-            paraphrased.pop();
-            assert!(!matches_recorded(&paraphrased, &recorded), "{name}");
+            let mut changed = recorded.clone();
+            let index = changed.len() / 2;
+            changed[index] ^= 0x01;
+            assert_ne!(changed, recorded, "{name}");
+            assert!(!matches_recorded(&changed, &recorded), "{name}");
         }
         assert!(client.system_one("missing.json").is_err());
 
@@ -1172,7 +1177,12 @@ mod tests {
         assert!(!call.initiated);
         assert_eq!(call.op, "tool_call");
         assert_eq!(call.facet_version, "2.1.3");
+        let missing = missing_key_envelope();
+        assert!(missing.contains("\"reason\":\"missing_key\""));
+        assert!(missing.contains("\"initiated\":false"));
+        assert!(!missing.contains("\"initiated\":true"));
 
+        let live = live_transport_argv().join(" ");
         let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
         for entry in std::fs::read_dir(&src).expect("src") {
             let path = entry.expect("entry").path();

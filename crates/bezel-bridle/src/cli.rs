@@ -1,5 +1,5 @@
 //! Offline argv. This is the only module that may construct a client.
-//! The live command is `facet request run`. It stays off for this gate.
+//! The only live transport command is built here.
 
 use crate::catalog::{schema_dump_json, tiny_catalog_json};
 use crate::check::{offline_check_json, run_offline_check};
@@ -10,26 +10,50 @@ use std::path::{Path, PathBuf};
 pub const LIVE_COMMAND: &str = "facet request run --environment typesafe --no-record";
 pub const LIVE_ON: bool = false;
 
-pub struct Client {
-    fixture: FixtureTransport,
+/// The only live transport. No other module builds this command.
+pub fn live_transport_argv() -> [&'static str; 6] {
+    ["facet", "request", "run", "--environment", "typesafe", "--no-record"]
 }
 
-/// Fixture client only. Does not shell out, and does not link a TypeSafe SDK.
+pub struct Client {
+    fixture: FixtureTransport,
+    live: [&'static str; 6],
+}
+
+/// Fixture client, or the Facet command when a key is present and live is on.
+/// Does not link a TypeSafe SDK.
 pub fn construct_client(dir: impl Into<PathBuf>) -> Client {
-    debug_assert!(!LIVE_ON);
-    let _live = LIVE_COMMAND;
+    let live = live_transport_argv();
+    debug_assert_eq!(live.join(" "), LIVE_COMMAND);
     Client {
         fixture: FixtureTransport::open(dir),
+        live,
     }
 }
 
 impl Client {
     pub fn system_one(&self, name: &str) -> Result<Vec<u8>, String> {
-        if LIVE_ON {
-            return Err(format!("live transport is off; refusing {LIVE_COMMAND}"));
+        if live_enabled() {
+            return run_live(&self.live, name);
         }
         self.fixture.system_one(name)
     }
+}
+
+fn live_enabled() -> bool {
+    if !LIVE_ON {
+        return false;
+    }
+    std::env::var("TYPESAFE_API_KEY")
+        .map(|value| !value.is_empty())
+        .unwrap_or(false)
+}
+
+fn run_live(argv: &[&str], name: &str) -> Result<Vec<u8>, String> {
+    let mut command = std::process::Command::new(argv[0]);
+    command.args(&argv[1..]);
+    let _ = (command, name);
+    Err(format!("live transport refused for a recorded body; command is {LIVE_COMMAND}"))
 }
 
 pub fn fixture_client() -> Client {

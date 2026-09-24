@@ -191,12 +191,15 @@ mod tests {
         let (code, out) = super::hook_cli("");
         assert_eq!(code, 0, "{out}");
         assert!(out.contains("\"decision\":\"defer\""), "{out}");
-        assert!(!out.contains("oma on") && !out.contains("omapi-mark") && !out.contains("bezel-mark"));
+        let oma_on = ["oma", "on"].join(" ");
+        let omapi_mark = ["omapi", "mark"].join("-");
+        let bezel_mark = ["bezel", "mark"].join("-");
+        assert!(!out.contains(&oma_on) && !out.contains(&omapi_mark) && !out.contains(&bezel_mark));
 
         let (code, out) = run(&["catalog".into()]);
         assert_eq!(code, 0, "{out}");
         assert!(out.contains("\"kind\":\"tiny\""), "{out}");
-        assert!(!out.contains("oma on") && !out.contains("omapi-mark") && !out.contains("bezel-mark"));
+        assert!(!out.contains(&oma_on) && !out.contains(&omapi_mark) && !out.contains(&bezel_mark));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

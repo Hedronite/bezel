@@ -185,10 +185,33 @@ fn effective_mode(requested: &str, has_key: bool) -> &'static str {
     if !has_key {
         return "shadow";
     }
-    if requested.eq_ignore_ascii_case("active") {
+    resolve_permission_mode(requested)
+}
+
+pub fn resolve_permission_mode(value: &str) -> &'static str {
+    if value.eq_ignore_ascii_case("active") {
         "active"
     } else {
         "shadow"
+    }
+}
+
+pub fn map_permission_label(label: &str, parent: &str) -> Option<&'static str> {
+    match label {
+        "allow" => Some("continue"),
+        "deny" => Some("stop"),
+        "ask" if parent == "writer" => Some("writer"),
+        "ask" => Some("escalate"),
+        _ => None,
+    }
+}
+
+pub fn permission_surface(class_id: &str) -> Option<(&'static str, &'static str, bool)> {
+    match class_id {
+        "shell" => Some(("loop-stop", "permission", true)),
+        "write" => Some(("writer", "writer", false)),
+        "mcp" => Some(("route-workflow", "route-workflow", false)),
+        _ => None,
     }
 }
 

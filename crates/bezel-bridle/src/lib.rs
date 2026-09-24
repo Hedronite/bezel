@@ -15,32 +15,42 @@ mod policy;
 mod router;
 mod transport;
 
+#[cfg(test)]
+mod oracle;
+
 pub use calls::{
-    cannot_tell_json, envelope_matches, hard_stop_json, missing_key_envelope, model_uncertain_json,
-    obvious_effect_json, tool_call, HardStopTool,
+    cannot_tell_json, envelope_matches, guard_effect, hard_stop_json, missing_key_envelope, model_uncertain_json,
+    obvious_effect_json, rank_names, stated_keeps_optional_arg, tool_call, EffectGuard, HardStopTool,
 };
-pub use catalog::{schema_dump_json, tiny_catalog_json};
+pub use catalog::{build_gate_state, schema_dump_json, tiny_catalog_json, GateInput};
 pub use check::{
     check_envelope, deterministic_flags, file_kind, offline_check_json, parse_unified_diff, run_offline_check,
     write_flags, CheckReport, Hunk, OfflineCheck,
 };
 pub use cli::{fixture_client, live_transport_argv, run as cli_run, LIVE_COMMAND, LIVE_ON};
-pub use facts::{clip_to_max_hunk_chars, gather, gather_diff, write_tool_wire, Edit, GatherOpts, WriteBody};
+pub use facts::{
+    available_capabilities, clip_to_max_hunk_chars, diff_present, gather, gather_diff, parse_write_tool_wire,
+    scrub_secret_text, secret_object_key, write_tool_wire, Capabilities, Edit, GatherOpts, WriteBody,
+};
 pub use judge::{matches_recorded, recorded_answer, CHECK_JUDGE, MAIN_GATE, SHADOW_WORKFLOW};
 pub use harness::{
-    decide_hook, hook_command, hook_on_text, hook_stdout, modes_from_env, parse_hook_event, HookEvent, Modes,
+    decide_hook, harness_config, hook_command, hook_on_text, hook_stdout, modes_from_env, parse_hook_event,
+    smoke_decision_log, smoke_report, DecisionLog, HookEvent, Modes,
 };
-pub use loop_stop::{apply_loop_stop_thresholds, LoopStopDecision};
+pub use loop_stop::{apply_loop_stop_thresholds, decide_loop_stop, missing_key_loop, LoopEnvelope, LoopStopDecision};
 pub use permission::{
-    active_hook, apply_permission_verdict, decide_permission, write_from_flags, PermissionInput,
-    PermissionParent, PermissionVerdict, TypedPermission, WriteVerdict,
+    active_hook, apply_permission_verdict, decide_permission, map_permission_label, permission_surface,
+    resolve_permission_mode, write_from_flags, PermissionInput, PermissionParent, PermissionVerdict,
+    TypedPermission, WriteVerdict,
 };
-pub use router::bash_no_key;
+pub use router::{bash_no_key, route_writer_prompt};
 pub use policy::{
-    hook_decision, match_pretool_class, pretool_hook_decision, pretool_stamp, GateVerdict, HookOut,
-    SurfaceVerdict, AUTO_ALLOW,
-    CHECK_POLICY_ID, CONCERN_PARK, MAX_HUNK_CHARS, LOOP_STOP_MIN_CONFIDENCE, LOOP_STOP_MIN_MARGIN, LOOP_STOP_MIN_PROBABILITY,
-    LOOP_STOP_POLICY_ID, ROUTING_POLICY_ID, WRITE_CODE_DENY_FLAGS,
+    apply_check_thresholds, apply_routing_thresholds, choice_family, hook_decision, is_jev_bypass,
+    match_pretool_class, pretool_hook_decision, pretool_stamp, should_exec_agent, CheckBucket, GateVerdict,
+    HookOut, RouteDecision, SurfaceVerdict, AUTO_ALLOW, CHECK_POLICY_ID, CONCERN_FINDING, CONCERN_PARK,
+    KIND_MIN_CONFIDENCE, KIND_MIN_PROBABILITY, MAX_DIGEST_CHARS, MAX_HUNK_CHARS, LOOP_STOP_MIN_CONFIDENCE,
+    LOOP_STOP_MIN_MARGIN, LOOP_STOP_MIN_PROBABILITY, LOOP_STOP_POLICY_ID, PRETOOL_MATCHER, ROUTING_POLICY_ID,
+    WRITE_CODE_DENY_FLAGS,
 };
 
 #[cfg(test)]
@@ -959,6 +969,7 @@ mod tests {
     #[test]
     fn g2_unmatched_bypass_and_malformed_stay_defer_or_deny() {
         let bash = HookEvent {
+            command: String::new(),
             tool_name: "Bash".to_string(),
         };
         let bypass = decide_hook(
@@ -983,6 +994,7 @@ mod tests {
 
         let unmapped = decide_hook(
             &HookEvent {
+                command: String::new(),
                 tool_name: "read_file".to_string(),
             },
             &modes_from_env(&[("JEV_MODE", "active")]),
@@ -1004,6 +1016,7 @@ mod tests {
             assert!(catalog.contains(name));
             assert_eq!(match_pretool_class(name).map(|row| row.0), Some("mcp"));
             let event = HookEvent {
+                command: String::new(),
                 tool_name: name.to_string(),
             };
             let continued = decide_hook(

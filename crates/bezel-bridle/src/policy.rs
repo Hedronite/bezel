@@ -5,7 +5,12 @@ pub const CHECK_POLICY_ID: &str = "omapi-check-policy@1";
 pub const LOOP_STOP_POLICY_ID: &str = "omapi-loop-stop-policy@1";
 pub const ROUTING_POLICY_ID: &str = "omapi-route-workflow-policy@1";
 pub const CONCERN_PARK: f64 = 0.4;
+pub const CONCERN_FINDING: f64 = 0.7;
+pub const KIND_MIN_CONFIDENCE: f64 = 0.6;
+pub const KIND_MIN_PROBABILITY: f64 = 0.55;
 pub const MAX_HUNK_CHARS: usize = 4000;
+pub const MAX_DIGEST_CHARS: usize = 4000;
+pub const PRETOOL_MATCHER: &str = "web_search|WebSearch|web_fetch|WebFetch|spawn_subagent|Task|Bash|run_terminal_command|run_terminal_cmd|Write|Edit|MultiEdit|search_replace|[A-Za-z0-9][A-Za-z0-9_.-]*__[A-Za-z0-9_.-]+";
 pub const AUTO_ALLOW: bool = false;
 
 pub const LOOP_STOP_MIN_CONFIDENCE: f64 = 0.6;
@@ -144,6 +149,17 @@ pub struct HookOut {
     pub exit_code: i32,
 }
 
+/// Shadow always execs. Active stop, escalate, and blocked do not.
+pub fn should_exec_agent(mode: &str, choice: &str, gate: &str, blocked: bool) -> bool {
+    if !mode.eq_ignore_ascii_case("active") {
+        return true;
+    }
+    if choice == "stop" || choice == "escalate" || blocked {
+        return false;
+    }
+    choice == "continue" || gate == "auto"
+}
+
 fn allows_exec(choice: &str, gate: &str, blocked: bool) -> bool {
     if choice == "stop" || choice == "escalate" || blocked {
         return false;
@@ -241,5 +257,112 @@ if perm_blocks || calls_blocks {
         decision: "deny",
         reason: format!("jev choice={choice} gate={gate}{policy}"),
         exit_code: 2,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RouteDecision {
+    pub outcome: String,
+    pub reason: &'static str,
+    pub selected: String,
+    pub confidence: f64,
+    pub selected_prob: f64,
+    pub margin: f64,
+}
+
+pub fn apply_routing_thresholds(
+    choice: &str,
+    confidence: f64,
+    probabilities: &[(&str, f64)],
+    available: &[&str],
+) -> RouteDecision {
+    let selected = if choice.is_empty() { "cannot_tell" } else { choice };
+    let selected_prob = probabilities
+        .iter()
+        .find(|(label, _)| *label == selected)
+        .map(|(_, value)| *value)
+        .unwrap_or(0.0);
+    let runner_up = probabilities
+        .iter()
+        .filter(|(label, _)| *label != selected)
+        .map(|(_, value)| *value)
+        .fold(0.0_f64, f64::max);
+    let margin = selected_prob - runner_up;
+    let (outcome, reason) = if selected == "cannot_tell" {
+        ("cannot_tell", "cannot_tell")
+    } else if !available.iter().any(|name| *name == selected) {
+        ("cannot_tell", "unavailable")
+    } else if confidence < LOOP_STOP_MIN_CONFIDENCE
+        || selected_prob < LOOP_STOP_MIN_PROBABILITY
+        || margin < LOOP_STOP_MIN_MARGIN
+    {
+        ("cannot_tell", "model_uncertain")
+    } else {
+        (selected, "selected")
+    };
+    RouteDecision {
+        outcome: outcome.to_string(),
+        reason,
+        selected: selected.to_string(),
+        confidence,
+        selected_prob,
+        margin,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CheckBucket {
+    pub bucket: &'static str,
+    pub reason: &'static str,
+    pub flag: Option<String>,
+}
+
+pub fn apply_check_thresholds(
+    concern: f64,
+    kind: &str,
+    confidence: f64,
+    probabilities: &[(&str, f64)],
+) -> CheckBucket {
+    let kind = if kind.is_empty() { "cannot_tell" } else { kind };
+    let kind_prob = probabilities
+        .iter()
+        .find(|(label, _)| *label == kind)
+        .map(|(_, value)| *value)
+        .unwrap_or(0.0);
+    if kind == "cannot_tell" || confidence < KIND_MIN_CONFIDENCE || kind_prob < KIND_MIN_PROBABILITY {
+        return CheckBucket {
+            bucket: "parked",
+            reason: "model_uncertain",
+            flag: None,
+        };
+    }
+    if concern >= CONCERN_FINDING {
+        let flag = if kind == "none" { "jev_concern" } else { kind };
+        return CheckBucket {
+            bucket: "finding",
+            reason: "concern_above_threshold",
+            flag: Some(flag.to_string()),
+        };
+    }
+    if concern >= CONCERN_PARK {
+        return CheckBucket {
+            bucket: "parked",
+            reason: "concern_in_band",
+            flag: None,
+        };
+    }
+    CheckBucket {
+        bucket: "clear",
+        reason: "below_park",
+        flag: None,
+    }
+}
+
+pub fn choice_family(class_id: &str) -> &'static [&'static str] {
+    match class_id {
+        "web" | "subagent" | "shell" => &["continue", "stop", "escalate"],
+        "write" => &["none", "test_safety", "task_mismatch", "cannot_tell"],
+        "mcp" => &["check", "review", "cannot_tell"],
+        _ => &[],
     }
 }

@@ -10,6 +10,11 @@ const PERMISSION: &str = r#"{"surface":"shell","policyId":"omapi-loop-stop-polic
 
 const PRETOOL: &str = r#"{"matched":true,"class":"shell","policyId":"omapi-loop-stop-policy@1","choiceFamily":["continue","stop","escalate"],"toolName":"Bash","mismatch":false}"#;
 
+/// Writer-lane prompt. The default writer is the calling harness.
+pub fn route_writer_prompt() -> &'static str {
+    "cursor_default: \"Default writer for the calling harness (host Cursor auth)\""
+}
+
 /// Active or shadow, no API key, Bash fixture (`--tool-name Bash --intent Bash`).
 pub fn bash_no_key(mode: &str, repo: &Path) -> String {
     let catalog = tiny_catalog_json();

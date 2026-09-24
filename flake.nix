@@ -197,7 +197,7 @@
               echo "planes shim still has a launch banner" >&2
               exit 1
             fi
-            if grep -F 'Cursor/omp writer' "${self.packages.${system}.jev-router}/lib/jev-router/jev-router.mjs"; then
+            if grep -F 'Cursor/omp writer' ${./crates/bezel-bridle/src/router.rs}; then
               echo "route prompt still assumes an omp writer" >&2
               exit 1
             fi
@@ -340,15 +340,27 @@
             echo ok >"$out"
           '';
 
-          # Unit tests: policy, available-gate, check envelope. No live Jev.
-          jev-router-unit = pkgs.runCommand "jev-router-unit" { nativeBuildInputs = [ pkgs.nodejs pkgs.git ]; } ''
+          # Unit tests are cargo test of bezel-bridle.
+          jev-router-unit = pkgs.runCommandCC "jev-router-unit" {
+            nativeBuildInputs = [ pkgs.cargo pkgs.rustc pkgs.git ];
+          } ''
             set -eu
-            cp -r ${./packages/jev-router}/. .
-            cp ${./docs/POLICY-MAP.md} ./POLICY-MAP.md
-            cp ${./docs/GROK-BUILD.md} ./GROK-BUILD.md
-            cp ${./packages/cursor-agent-jev.nix} ./cursor-agent-jev.nix
-            cp ${./packages/bezel-planes-shim.sh} ./bezel-planes-shim.sh
-            JEV_ROUTER_BIN="${lib.getExe self.packages.${system}.jev-router}" node test.mjs
+            export CARGO_HOME=$TMPDIR/cargo-home
+            export CARGO_TARGET_DIR=$TMPDIR/cargo-target
+            export HOME=$TMPDIR/home
+            mkdir -p "$CARGO_HOME" "$HOME" "$CARGO_TARGET_DIR"
+            work=$TMPDIR/bridle
+            mkdir -p "$work/crates/bezel-bridle" "$work/packages" "$work/docs" "$work/skills-stub"
+            cp ${./crates/bezel-bridle}/Cargo.toml ${./crates/bezel-bridle}/Cargo.lock "$work/crates/bezel-bridle/"
+            cp -r ${./crates/bezel-bridle}/src "$work/crates/bezel-bridle/src"
+            cp -r ${./packages/jev-router} "$work/packages/jev-router"
+            cp ${./docs/POLICY-MAP.md} "$work/docs/POLICY-MAP.md"
+            cp ${./packages/cursor-agent-jev.nix} "$work/packages/cursor-agent-jev.nix"
+            cp ${./packages/bezel-planes-shim.sh} "$work/packages/bezel-planes-shim.sh"
+            cp -r ${./skills-stub}/laws "$work/skills-stub/laws"
+            chmod -R u+w "$work"
+            test -f "$work/crates/bezel-bridle/src/oracle.rs"
+            cargo test --offline --manifest-path "$work/crates/bezel-bridle/Cargo.toml"
             echo ok >"$out"
           '';
 

@@ -34,8 +34,8 @@ pub use facts::{
 };
 pub use judge::{matches_recorded, recorded_answer, CHECK_JUDGE, MAIN_GATE, SHADOW_WORKFLOW};
 pub use harness::{
-    decide_hook, hook_command, hook_on_text, hook_stdout, modes_from_env, parse_hook_event, smoke_decision_log,
-    DecisionLog, HookEvent, Modes,
+    decide_hook, harness_config, hook_command, hook_on_text, hook_stdout, modes_from_env, parse_hook_event,
+    smoke_decision_log, smoke_report, DecisionLog, HookEvent, Modes,
 };
 pub use loop_stop::{apply_loop_stop_thresholds, decide_loop_stop, missing_key_loop, LoopEnvelope, LoopStopDecision};
 pub use permission::{

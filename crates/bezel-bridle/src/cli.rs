@@ -75,7 +75,13 @@ pub fn run(args: &[String]) -> (i32, String) {
         let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut stdin);
         return hook_cli(&stdin);
     }
-    if args.iter().any(|arg| arg == "--catalog") {
+    if args.first().map(String::as_str) == Some("smoke") {
+        return (0, format!("{}\n", crate::harness::smoke_report()));
+    }
+    if args.first().map(String::as_str) == Some("config") {
+        return (0, format!("{}\n", crate::harness::harness_config()));
+    }
+    if args.first().map(String::as_str) == Some("catalog") || args.iter().any(|arg| arg == "--catalog") {
         return (0, format!("{}\n", tiny_catalog_json()));
     }
     if let Some(index) = args.iter().position(|arg| arg == "--schema" || arg == "--schema-dump") {
@@ -102,6 +108,7 @@ mod tests {
     #[test]
     fn hook_cli_matches_hook_command() {
         let _lock = env_lock();
+        let _env = EnvSet::apply(&[("JEV_ROUTER", None)]);
         let stdin = r#"{"tool_name":"Bash","tool_input":{"command":"npm test"}}"#;
         let (code, out) = super::hook_cli(stdin);
         let owned: Vec<(String, String)> = std::env::vars().collect();
@@ -111,6 +118,86 @@ mod tests {
         assert_eq!(out, expect);
         assert!(out.contains("\"decision\":\"defer\"") || out.contains("\"decision\":\"deny\""));
         assert!(!out.contains("\"decision\":\"allow\""));
+    }
+
+    /// grok-build-harness spawns JEV_ROUTER for a matched hook and skips it on bypass.
+    #[test]
+    fn hook_cli_spawns_router_stop_and_skips_bypass() {
+        let _lock = env_lock();
+        let dir = std::env::temp_dir().join(format!("bezel-hook-spawn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let router = dir.join("router");
+        let garbage = dir.join("garbage");
+        let argv = dir.join("argv");
+        let called = dir.join("called");
+        std::fs::write(
+            &router,
+            "#!/bin/sh\nif [ \"${HARNESS_MARK:-}\" = \"poison\" ]; then\n  : > \"${HARNESS_CALLED_FILE:?}\"\n  exit 99\nfi\nprintf '%s\\n' \"$*\" > \"${HARNESS_ARGV_LOG:-/dev/null}\"\nprintf '%s\\n' '{\"ok\":true,\"mode\":\"active\",\"choice\":\"stop\",\"gate\":\"hold\",\"blocked\":true,\"exec\":false,\"bypass\":false}'\n",
+        )
+        .unwrap();
+        std::fs::write(&garbage, "#!/bin/sh\nprintf '%s\\n' 'not-json'\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&router, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::set_permissions(&garbage, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let event = r#"{"hookEventName":"PreToolUse","toolName":"Bash","toolInput":{"command":"npm test"}}"#;
+        let _env = EnvSet::apply(&[
+            ("JEV_ROUTER", Some(router.to_str().unwrap())),
+            ("JEV_BYPASS", Some("")),
+            ("JEV_MODE", Some("active")),
+            ("HARNESS_ARGV_LOG", Some(argv.to_str().unwrap())),
+            ("HARNESS_MARK", None),
+            ("HARNESS_CALLED_FILE", None),
+            ("TYPESAFE_API_KEY", None),
+        ]);
+        std::fs::write(&argv, "").unwrap();
+        let (code, out) = super::hook_cli(event);
+        assert_eq!(code, 2, "{out}");
+        assert!(out.contains("\"decision\":\"deny\""), "{out}");
+        assert!(out.contains("policy=omapi-loop-stop-policy@1"), "{out}");
+        let logged = std::fs::read_to_string(&argv).unwrap();
+        assert!(logged.contains("--tool-name"), "{logged}");
+        assert!(logged.contains("Bash"), "{logged}");
+        assert!(logged.contains("--tool-input"), "{logged}");
+        assert!(logged.contains("npm test"), "{logged}");
+
+        set_env("JEV_BYPASS", Some("1"));
+        set_env("HARNESS_MARK", Some("poison"));
+        set_env("HARNESS_CALLED_FILE", Some(called.to_str().unwrap()));
+        let (code, out) = super::hook_cli(event);
+        assert_eq!(code, 0, "{out}");
+        assert!(out.contains("\"decision\":\"defer\"") && out.contains("\"reason\":\"bypass\""), "{out}");
+        assert!(!called.exists(), "bypass must not call the router");
+
+        set_env("JEV_BYPASS", Some(""));
+        set_env("HARNESS_MARK", None);
+        set_env("JEV_MODE", Some("active"));
+        set_env("JEV_ROUTER", Some(garbage.to_str().unwrap()));
+        let (code, out) = super::hook_cli(event);
+        assert_eq!(code, 2, "{out}");
+        assert!(out.contains("\"reason\":\"jev uncertain\""), "{out}");
+
+        set_env("JEV_MODE", Some("shadow"));
+        let (code, out) = super::hook_cli(event);
+        assert_eq!(code, 0, "{out}");
+        assert!(out.contains("\"decision\":\"defer\"") && out.contains("\"reason\":\"shadow\""), "{out}");
+
+        set_env("JEV_ROUTER", None);
+        set_env("JEV_MODE", Some("shadow"));
+        set_env("JEV_BYPASS", Some(""));
+        let (code, out) = super::hook_cli("");
+        assert_eq!(code, 0, "{out}");
+        assert!(out.contains("\"decision\":\"defer\""), "{out}");
+        assert!(!out.contains("oma on") && !out.contains("omapi-mark") && !out.contains("bezel-mark"));
+
+        let (code, out) = run(&["catalog".into()]);
+        assert_eq!(code, 0, "{out}");
+        assert!(out.contains("\"kind\":\"tiny\""), "{out}");
+        assert!(!out.contains("oma on") && !out.contains("omapi-mark") && !out.contains("bezel-mark"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -320,7 +407,57 @@ mod tests {
 fn hook_cli(stdin: &str) -> (i32, String) {
     let owned: Vec<(String, String)> = std::env::vars().collect();
     let pairs: Vec<(&str, &str)> = owned.iter().map(|(key, value)| (key.as_str(), value.as_str())).collect();
-    crate::harness::hook_command(stdin, &pairs)
+    let modes = crate::harness::modes_from_env(&pairs);
+    let event = crate::harness::parse_hook_event(stdin).unwrap_or(crate::harness::HookEvent {
+        tool_name: String::new(),
+        command: String::new(),
+    });
+    let matched = !event.tool_name.is_empty()
+        && crate::policy::pretool_stamp(&event.tool_name).is_some_and(|stamp| stamp.matched);
+    let router = std::env::var("JEV_ROUTER").unwrap_or_default();
+    if modes.bypass || !matched || router.is_empty() {
+        return crate::harness::hook_command(stdin, &pairs);
+    }
+    let verdict = spawn_router(&router, &event);
+    let decision = crate::harness::decide_hook(&event, &modes, verdict.as_ref());
+    (decision.exit_code, crate::harness::hook_stdout(&decision))
+}
+
+fn spawn_router(bin: &str, event: &crate::harness::HookEvent) -> Option<crate::policy::GateVerdict> {
+    let mut args = vec![
+        "--tool-name".to_string(),
+        event.tool_name.clone(),
+        "--intent".to_string(),
+        event.tool_name.clone(),
+    ];
+    if !event.command.is_empty() {
+        args.push("--tool-input".to_string());
+        args.push(event.command.clone());
+    }
+    let output = std::process::Command::new(bin)
+        .args(&args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout.trim().lines().last().unwrap_or("").trim();
+    if !line.starts_with('{') {
+        return None;
+    }
+    let choice = json_field(line, "choice").unwrap_or_else(|| "unclassified".to_string());
+    let gate = json_field(line, "gate").unwrap_or_else(|| "hold".to_string());
+    let mode = json_field(line, "mode").unwrap_or_else(|| "shadow".to_string());
+    let blocked = line.contains("\"blocked\":true");
+    let mut verdict = crate::policy::GateVerdict::simple(&mode, &choice, &gate, blocked);
+    verdict.bypass = line.contains("\"bypass\":true");
+    Some(verdict)
+}
+
+fn json_field(text: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\"");
+    let rest = text[text.find(&needle)? + needle.len()..].trim_start().strip_prefix(':')?.trim_start();
+    let rest = rest.strip_prefix('"')?;
+    Some(rest.split('"').next().unwrap_or("").to_string())
 }
 
 fn diff_argument(args: &[String]) -> String {

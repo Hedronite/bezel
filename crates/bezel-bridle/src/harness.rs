@@ -126,6 +126,199 @@ pub struct DecisionLog {
     pub lines: usize,
 }
 
+/// Harness config. One PreToolUse command. No key and no mode.
+pub fn harness_config() -> String {
+    format!(
+        r#"{{"hooks":{{"PreToolUse":[{{"matcher":{},"hooks":[{{"type":"command","command":"grok-build-jev hook","timeout":30}}]}}]}}}}"#,
+        json_escape(&crate::policy::PRETOOL_MATCHER),
+    )
+}
+
+/// Offline smoke. Fields come from the shipped stamp, catalog, schema, and hook.
+pub fn smoke_report() -> String {
+    let bash = pretool_stamp("Bash").expect("bash stamp");
+    let classes = ["Bash", "search_replace", "linear__list_issues"]
+        .into_iter()
+        .map(|name| {
+            let stamp = pretool_stamp(name).expect(name);
+            format!(
+                r#"{{"toolName":"{name}","class":"{}","policyId":"{}"}}"#,
+                stamp.class_id.unwrap_or(""),
+                stamp.policy_id.unwrap_or(""),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let catalog_blob = crate::catalog::tiny_catalog_json();
+    let schema_blob = crate::catalog::schema_dump_json("linear__list_issues");
+    let call = crate::calls::tool_call();
+    let shadow = shell_hook("shadow", true, Some("deny"), 0.9, 0.05, 0.85, 0.1);
+    let active = shell_hook("active", true, Some("deny"), 0.9, 0.05, 0.85, 0.1);
+    let uncertain = shell_hook("active", true, Some("allow"), 0.4, 0.4, 0.35, 0.25);
+    let absent = shell_hook("active", false, Some("deny"), 0.9, 0.05, 0.85, 0.1);
+    let empty = write_empty_hook();
+    let bypass = hook_of(
+        "Bash",
+        &[("JEV_BYPASS", "1")],
+        Some(crate::policy::GateVerdict::simple("active", "stop", "hold", true)),
+    );
+    let not_bypass = hook_of(
+        "Bash",
+        &[("JEV_BYPASS", "yes"), ("JEV_MODE", "active")],
+        Some(crate::policy::GateVerdict::simple("active", "stop", "hold", true)),
+    );
+    let uncertain_active = hook_of("Bash", &[("JEV_MODE", "active")], None);
+    let uncertain_shadow = hook_of("Bash", &[("JEV_MODE", "shadow")], None);
+    let read_stays = hook_of(
+        "linear__list_issues",
+        &[("JEV_MODE", "shadow")],
+        Some(crate::policy::GateVerdict::simple("shadow", "continue", "auto", false)),
+    );
+    let loop_wins = hook_of(
+        "linear__list_issues",
+        &[("JEV_MODE", "active")],
+        Some(crate::policy::GateVerdict::simple("active", "stop", "hold", true)),
+    );
+    let unmapped = hook_of(
+        "read_file",
+        &[("JEV_MODE", "active")],
+        Some(crate::policy::GateVerdict::simple("active", "continue", "auto", false)),
+    );
+    let irreversible = hook_of(
+        "linear__save_issue",
+        &[("JEV_MODE", "shadow")],
+        Some(crate::policy::GateVerdict::simple("shadow", "continue", "auto", false)),
+    );
+    let schema_decision = if schema_blob.contains("\"decision\":\"defer\"") {
+        "defer"
+    } else {
+        "deny"
+    };
+    format!(
+        r#"{{"ok":true,"pretool":{{"toolName":"Bash","class":"{}","policyId":"{}","matched":{}}},"classes":[{classes}],"catalog":{{"kind":"tiny","entries":{},"bytes":{},"schemaInline":false}},"schemaDump":{{"tool":"linear__list_issues","decision":"{schema_decision}","typedCall":false,"autoAllow":{}}},"calls":{{"transport":"{}","op":"{}","initiated":{},"policyId":"{}","autoAllow":{}}},"permission":{{"shadow":{{"decision":"{}","honor":{},"blocked":{}}},"active":{{"decision":"{}","honor":{},"blocked":{}}},"uncertain":{{"decision":"{}"}},"emptyFindings":{{"reason":"{}","decision":"{}","approval":false}},"keyAbsent":{{"mode":"{}","honor":{},"blocked":{}}}}},"bypass":{{"decision":"{}","reason":"{}"}},"notBypass":{{"decision":"{}"}},"irreversible":{{"decision":"{}","code":null,"initiated":{},"autoPromote":false}},"uncertainActive":{{"decision":"{}"}},"uncertainShadow":{{"decision":"{}"}},"readStaysDefer":{{"decision":"{}"}},"loopStopWins":{{"decision":"{}"}},"unmapped":{{"decision":"{}","reason":"{}"}}}}"#,
+        bash.class_id.unwrap_or(""),
+        bash.policy_id.unwrap_or(""),
+        jbool(bash.matched),
+        catalog_blob.matches("\"class\":").count(),
+        catalog_blob.len(),
+        jbool(schema_blob.contains("\"autoAllow\":true")),
+        call.transport,
+        call.op,
+        jbool(call.initiated),
+        crate::policy::ROUTING_POLICY_ID,
+        jbool(crate::policy::AUTO_ALLOW),
+        shadow.0.decision,
+        jbool(shadow.1.honor),
+        jbool(shadow.1.blocked),
+        active.0.decision,
+        jbool(active.1.honor),
+        jbool(active.1.blocked),
+        uncertain.0.decision,
+        empty.1,
+        empty.0.decision,
+        absent.1.mode,
+        jbool(absent.1.honor),
+        jbool(absent.1.blocked),
+        bypass.decision,
+        bypass.reason,
+        not_bypass.decision,
+        irreversible.decision,
+        jbool(call.initiated),
+        uncertain_active.decision,
+        uncertain_shadow.decision,
+        read_stays.decision,
+        loop_wins.decision,
+        unmapped.decision,
+        unmapped.reason,
+    )
+}
+
+fn shell_hook(
+    mode: &'static str,
+    has_key: bool,
+    label: Option<&'static str>,
+    confidence: f64,
+    allow_p: f64,
+    deny_p: f64,
+    ask_p: f64,
+) -> (HookOut, crate::permission::PermissionVerdict) {
+    let permission = crate::permission::decide_permission(&crate::permission::PermissionInput {
+        class_id: "shell",
+        requested_mode: mode,
+        has_key,
+        content_present: true,
+        label,
+        confidence,
+        allow_p,
+        deny_p,
+        ask_p,
+        path: "",
+        diff: "",
+        concern: None,
+        flags: None,
+        tool_name: "Bash",
+        effect: "",
+        routing_outcome: None,
+        typed: None,
+    })
+    .expect("shell permission");
+    let mut parent = crate::policy::GateVerdict::simple("shadow", "continue", "auto", false);
+    parent.permission = Some(surface_from(&permission));
+    let hook = hook_of("Bash", &[], Some(parent));
+    (hook, permission)
+}
+
+fn write_empty_hook() -> (HookOut, String) {
+    let permission = crate::permission::decide_permission(&crate::permission::PermissionInput {
+        class_id: "write",
+        requested_mode: "active",
+        has_key: true,
+        content_present: false,
+        label: None,
+        confidence: 0.0,
+        allow_p: 0.0,
+        deny_p: 0.0,
+        ask_p: 0.0,
+        path: "src/app.js",
+        diff: "",
+        concern: None,
+        flags: None,
+        tool_name: "search_replace",
+        effect: "",
+        routing_outcome: None,
+        typed: None,
+    })
+    .expect("write permission");
+    let reason = json_string(&permission.json, "reason").unwrap_or_default();
+    let mut parent = crate::policy::GateVerdict::simple("shadow", "continue", "auto", false);
+    parent.permission = Some(surface_from(&permission));
+    let hook = hook_of("search_replace", &[], Some(parent));
+    (hook, reason)
+}
+
+fn surface_from(permission: &crate::permission::PermissionVerdict) -> crate::policy::SurfaceVerdict {
+    crate::policy::SurfaceVerdict {
+        honor: permission.honor,
+        mode: permission.mode.to_string(),
+        choice: permission.choice.to_string(),
+        gate: permission.gate.to_string(),
+        blocked: permission.blocked,
+        policy_id: permission.policy_id.to_string(),
+    }
+}
+
+fn hook_of(tool: &str, env: &[(&str, &str)], verdict: Option<crate::policy::GateVerdict>) -> HookOut {
+    let event = HookEvent {
+        tool_name: tool.to_string(),
+        command: String::new(),
+    };
+    decide_hook(&event, &modes_from_env(env), verdict.as_ref())
+}
+
+fn jbool(value: bool) -> &'static str {
+    if value { "true" } else { "false" }
+}
+
 /// One decision line under `dir`. Never writes `~/.grok/logs/jev`.
 pub fn smoke_decision_log(dir: &std::path::Path) -> std::io::Result<DecisionLog> {
     let verdict = crate::permission::decide_permission(&crate::permission::PermissionInput {

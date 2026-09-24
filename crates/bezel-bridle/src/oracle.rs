@@ -1176,6 +1176,52 @@ fn harness_uses_the_map_and_smoke_pieces_never_allow() {
 }
 
 #[test]
+fn smoke_and_config_match_the_harness_check() {
+    let report = smoke_report();
+    let catalog = tiny_catalog_json();
+    assert!(catalog.len() < 900, "catalog bytes {}", catalog.len());
+    for needle in [
+        r#""ok":true"#,
+        r#""pretool":{"toolName":"Bash","class":"shell","policyId":"omapi-loop-stop-policy@1","matched":true}"#,
+        r#""classes":[{"toolName":"Bash","class":"shell","policyId":"omapi-loop-stop-policy@1"},{"toolName":"search_replace","class":"write","policyId":"omapi-check-policy@1"},{"toolName":"linear__list_issues","class":"mcp","policyId":"omapi-route-workflow-policy@1"}]"#,
+        r#""kind":"tiny""#,
+        r#""schemaInline":false"#,
+        r#""schemaDump":{"tool":"linear__list_issues","decision":"defer","typedCall":false,"autoAllow":false}"#,
+        r#""calls":{"transport":"facet","op":"tool_call","initiated":false,"policyId":"omapi-route-workflow-policy@1","autoAllow":false}"#,
+        r#""shadow":{"decision":"defer","honor":false,"blocked":false}"#,
+        r#""active":{"decision":"deny","honor":true,"blocked":true}"#,
+        r#""uncertain":{"decision":"deny"}"#,
+        r#""emptyFindings":{"reason":"empty_findings_not_approval","decision":"deny","approval":false}"#,
+        r#""keyAbsent":{"mode":"shadow","honor":false,"blocked":false}"#,
+        r#""bypass":{"decision":"defer","reason":"bypass"}"#,
+        r#""notBypass":{"decision":"deny"}"#,
+        r#""irreversible":{"decision":"defer","code":null,"initiated":false,"autoPromote":false}"#,
+        r#""uncertainActive":{"decision":"deny"}"#,
+        r#""uncertainShadow":{"decision":"defer"}"#,
+        r#""readStaysDefer":{"decision":"defer"}"#,
+        r#""loopStopWins":{"decision":"deny"}"#,
+        r#""unmapped":{"decision":"defer","reason":"unmatched"}"#,
+    ] {
+        assert!(report.contains(needle), "missing {needle} in {report}");
+    }
+    assert!(report.contains(&format!(r#""bytes":{}"#, catalog.len())), "{report}");
+    assert!(!report.contains("\"decision\":\"allow\""));
+    assert!(!report.contains("F454"));
+    let (code, out) = cli::run(&["smoke".into()]);
+    assert_eq!(code, 0);
+    assert_eq!(out.trim(), report);
+    let cfg = harness_config();
+    assert!(cfg.contains("\"command\":\"grok-build-jev hook\""));
+    assert!(!cfg.contains("TYPESAFE_API_KEY"));
+    assert!(!cfg.contains("JEV_MODE"));
+    assert!(!cfg.contains("JEV_PERMISSION_MODE"));
+    assert!(!cfg.contains("JEV_TYPED_CALL_MODE"));
+    let (code, printed) = cli::run(&["config".into()]);
+    assert_eq!(code, 0);
+    assert_eq!(printed.trim(), cfg);
+}
+
+#[test]
 fn route_prompt_names_the_calling_harness() {
     let text = route_writer_prompt();
     assert!(text.contains("cursor_default"));

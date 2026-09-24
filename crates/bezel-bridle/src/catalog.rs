@@ -15,6 +15,67 @@ pub fn tiny_catalog_json() -> String {
     )
 }
 
+/// `buildGateState`: tiny catalog on the state, secret keys and full schemas dropped.
+pub struct GateInput<'a> {
+    pub intent: &'a str,
+    pub typesafe_api_key: Option<&'a str>,
+    pub api_key: Option<&'a str>,
+    pub schema: Option<&'a str>,
+    pub loop_stop_policy_version: &'a str,
+    pub secret: &'a str,
+}
+
+pub fn build_gate_state(input: &GateInput<'_>) -> String {
+    if secret_key("TYPESAFE_API_KEY") {
+        let _ = input.typesafe_api_key;
+    }
+    if secret_key("apiKey") {
+        let _ = input.api_key;
+    }
+    let _ = input.schema;
+    let intent = redact_secret(input.intent, input.secret);
+    let catalog = tiny_catalog_json();
+    format!(
+        r#"{{"intent":{},"loopStopPolicy":{{"version":{}}},"catalog":{catalog}}}"#,
+        json_string(&intent),
+        json_string(input.loop_stop_policy_version),
+    )
+}
+
+fn secret_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    lower.contains("api_key")
+        || lower.contains("apikey")
+        || lower.contains("api-key")
+        || lower.contains("secret")
+        || lower.contains("token")
+        || lower.contains("authorization")
+        || lower.contains("password")
+        || lower.contains("credential")
+}
+
+fn redact_secret(text: &str, secret: &str) -> String {
+    if secret.is_empty() {
+        text.to_string()
+    } else {
+        text.replace(secret, "[redacted]")
+    }
+}
+
+fn json_string(value: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            other => out.push(other),
+        }
+    }
+    out.push('"');
+    out
+}
+
 pub fn schema_dump_json(tool_name: &str) -> String {
     let name = tool_name;
     let Some((class_id, policy_id)) = match_pretool_class(name) else {

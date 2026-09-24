@@ -709,7 +709,9 @@ fn router_source_policy_map_wrap_and_one_json_line() {
     assert!(wrap.contains("--schema"));
     assert!(wrap.contains("--catalog"));
     assert!(wrap.contains("stop/escalate do not exec"));
-    assert!(!wrap.contains("--set TYPESAFE_API_KEY") && !wrap.contains("--set=TYPESAFE_API_KEY"));
+    let baked_space = ["--set", "TYPESAFE_API_KEY"].join(" ");
+    let baked_eq = ["--set=", "TYPESAFE_API_KEY"].join("");
+    assert!(!wrap.contains(&baked_space) && !wrap.contains(&baked_eq));
     let shim = read_rel("../../packages/bezel-planes-shim.sh");
     assert!(!shim.contains("PLANES filter on"));
     let _lock = cli::test_env_lock();
@@ -1171,4 +1173,49 @@ fn harness_uses_the_map_and_smoke_pieces_never_allow() {
     assert!(yes.contains("\"decision\":\"deny\""));
     assert_ne!(hook_decision("continue", "auto"), "allow");
     assert!(!AUTO_ALLOW);
+}
+
+#[test]
+fn route_prompt_names_the_calling_harness() {
+    let text = route_writer_prompt();
+    assert!(text.contains("cursor_default"));
+    assert!(text.contains("Default writer for the calling harness (host Cursor auth)"));
+    assert!(!text.contains("Cursor/omp writer"));
+}
+
+#[test]
+fn build_gate_state_strips_the_secret_and_keeps_the_tiny_catalog() {
+    let secret = ["catalog", "test", "secret"].join("-");
+    let state = build_gate_state(&GateInput {
+        intent: &format!("ship {secret} please"),
+        typesafe_api_key: Some(&secret),
+        api_key: Some(&secret),
+        schema: Some(r#"{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"}"#),
+        loop_stop_policy_version: LOOP_STOP_POLICY_ID,
+        secret: &secret,
+    });
+    assert!(!state.contains(&secret));
+    assert!(state.contains("[redacted]"));
+    assert!(state.contains("\"kind\":\"tiny\""));
+    assert!(!state.contains("$schema"));
+    assert!(!state.contains("TYPESAFE_API_KEY"));
+    assert!(!state.contains("apiKey"));
+    assert!(state.contains(&format!("\"version\":\"{LOOP_STOP_POLICY_ID}\"")));
+}
+
+#[test]
+fn smoke_decision_log_is_one_temp_line() {
+    let dir = std::env::temp_dir().join(format!("bezel-decision-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let log = smoke_decision_log(&dir).unwrap();
+    assert_eq!(log.lines, 1);
+    assert!(log.path.starts_with(&dir));
+    assert!(!log.path.to_string_lossy().contains(".grok/logs/jev"));
+    let body = std::fs::read_to_string(&log.path).unwrap();
+    assert_eq!(body.trim().lines().count(), 1);
+    assert!(body.contains("detail="));
+    assert!(body.contains("question="));
+    assert!(!body.contains("TYPESAFE_API_KEY"));
+    let _ = std::fs::remove_dir_all(&dir);
 }

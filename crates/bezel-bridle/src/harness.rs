@@ -121,6 +121,54 @@ pub fn decide_hook(event: &HookEvent, modes: &Modes, verdict: Option<&GateVerdic
     decision
 }
 
+pub struct DecisionLog {
+    pub path: std::path::PathBuf,
+    pub lines: usize,
+}
+
+/// One decision line under `dir`. Never writes `~/.grok/logs/jev`.
+pub fn smoke_decision_log(dir: &std::path::Path) -> std::io::Result<DecisionLog> {
+    let verdict = crate::permission::decide_permission(&crate::permission::PermissionInput {
+        class_id: "write",
+        requested_mode: "active",
+        has_key: true,
+        content_present: false,
+        label: None,
+        confidence: 0.0,
+        allow_p: 0.0,
+        deny_p: 0.0,
+        ask_p: 0.0,
+        path: "src/app.js",
+        diff: "",
+        concern: None,
+        flags: None,
+        tool_name: "search_replace",
+        effect: "",
+        routing_outcome: None,
+        typed: None,
+    })
+    .expect("write permission");
+    let hold = json_hold(&verdict.json).unwrap_or_default();
+    let reason = format!("jev choice=escalate gate=hold policy={} {hold}", verdict.policy_id);
+    let body = format!(
+        "{{\"decision\":\"deny\",\"reason\":{},\"policyId\":\"{}\"}}\n",
+        json_escape(&reason),
+        verdict.policy_id,
+    );
+    let path = dir.join("decision.jsonl");
+    std::fs::write(&path, &body)?;
+    let lines = body.lines().count();
+    Ok(DecisionLog { path, lines })
+}
+
+fn json_hold(text: &str) -> Option<String> {
+    let key = "\"hold\":\"";
+    let start = text.find(key)? + key.len();
+    let rest = &text[start..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
 /// Same entry `bezel-bridle hook` uses. Stdin JSON in, one JSON line out, exit 2 on deny.
 /// No API key uses the same missing-key router verdict as `jev-router`: active Bash
 /// escalates on the loop-stop policy instead of an empty `jev uncertain`.

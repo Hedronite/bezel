@@ -197,7 +197,7 @@
               echo "planes shim still has a launch banner" >&2
               exit 1
             fi
-            if grep -F 'Cursor/omp writer' "${self.packages.${system}.jev-router}/lib/jev-router/jev-router.mjs"; then
+            if grep -F 'Cursor/omp writer' ${./crates/bezel-bridle/src/router.rs}; then
               echo "route prompt still assumes an omp writer" >&2
               exit 1
             fi

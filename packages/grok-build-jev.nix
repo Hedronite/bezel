@@ -1,4 +1,4 @@
-{ writeShellApplication, jev-router, nodejs, lib }:
+{ writeShellApplication, jev-router, lib }:
 
 # Grok Build PreToolUse adapter. One router, one JEV_BYPASS predicate.
 # The shell does not classify tools and does not bake TYPESAFE_API_KEY.
@@ -11,9 +11,6 @@ writeShellApplication {
     jev-router
   ];
   text = ''
-    if [ -z "''${JEV_ROUTER:-}" ]; then
-      export JEV_ROUTER="${lib.getExe jev-router}"
-    fi
-    exec ${lib.getExe nodejs} ${jev-router}/lib/jev-router/harness.mjs "$@"
+    exec ${lib.getExe jev-router} "$@"
   '';
 }

@@ -22,7 +22,7 @@ pub use calls::{
     cannot_tell_json, envelope_matches, guard_effect, hard_stop_json, missing_key_envelope, model_uncertain_json,
     obvious_effect_json, rank_names, stated_keeps_optional_arg, tool_call, EffectGuard, HardStopTool,
 };
-pub use catalog::{schema_dump_json, tiny_catalog_json};
+pub use catalog::{build_gate_state, schema_dump_json, tiny_catalog_json, GateInput};
 pub use check::{
     check_envelope, deterministic_flags, file_kind, offline_check_json, parse_unified_diff, run_offline_check,
     write_flags, CheckReport, Hunk, OfflineCheck,
@@ -34,7 +34,8 @@ pub use facts::{
 };
 pub use judge::{matches_recorded, recorded_answer, CHECK_JUDGE, MAIN_GATE, SHADOW_WORKFLOW};
 pub use harness::{
-    decide_hook, hook_command, hook_on_text, hook_stdout, modes_from_env, parse_hook_event, HookEvent, Modes,
+    decide_hook, hook_command, hook_on_text, hook_stdout, modes_from_env, parse_hook_event, smoke_decision_log,
+    DecisionLog, HookEvent, Modes,
 };
 pub use loop_stop::{apply_loop_stop_thresholds, decide_loop_stop, missing_key_loop, LoopEnvelope, LoopStopDecision};
 pub use permission::{
@@ -42,7 +43,7 @@ pub use permission::{
     resolve_permission_mode, write_from_flags, PermissionInput, PermissionParent, PermissionVerdict,
     TypedPermission, WriteVerdict,
 };
-pub use router::bash_no_key;
+pub use router::{bash_no_key, route_writer_prompt};
 pub use policy::{
     apply_check_thresholds, apply_routing_thresholds, choice_family, hook_decision, is_jev_bypass,
     match_pretool_class, pretool_hook_decision, pretool_stamp, should_exec_agent, CheckBucket, GateVerdict,

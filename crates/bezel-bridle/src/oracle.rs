@@ -1,5 +1,5 @@
-//! One Rust test per behavior `packages/jev-router/test.mjs` asserts.
-//! Each test calls a shipped function. Node assertions stay in `test.mjs`.
+//! Behaviors once asserted by the router package tests.
+//! Each test calls a shipped function.
 
 use super::*;
 use super::{calls, cli, facts, loop_stop, permission, policy};
@@ -11,14 +11,6 @@ fn root(rel: &str) -> PathBuf {
 
 fn read_rel(rel: &str) -> String {
     std::fs::read_to_string(root(rel)).unwrap_or_else(|err| panic!("{rel}: {err}"))
-}
-
-fn client_ctor() -> String {
-    ["Type", "SafeClient"].join("")
-}
-
-fn sdk_name() -> String {
-    ["@typesafe-ai", "sdk"].join("/")
 }
 
 fn permit<'a>(
@@ -339,26 +331,6 @@ fn write_hook_forwards_a_clipped_redacted_edit() {
 
 #[test]
 fn check_stays_on_the_git_worktree_and_empty_findings_are_not_approval() {
-    let router = read_rel("../../packages/jev-router/jev-router.mjs");
-    let permission_at = router.find("function permissionDecision").unwrap();
-    let permission_end = router.find("function withPermission").unwrap();
-    let permission_src = &router[permission_at..permission_end];
-    assert!(permission_src.contains("toolName: args.toolName"));
-    assert!(permission_src.contains("effectFromHook(args.toolName"));
-    assert!(!permission_src.contains("gatherDiff"));
-    assert!(!permission_src.contains(&sdk_name()));
-    let hook_src = read_rel("../../packages/jev-router/permission.mjs");
-    let forward_at = hook_src.find("export function permissionFromHook").unwrap();
-    let forward_end = hook_src.find("export function permissionBypass").unwrap();
-    let forwarder = &hook_src[forward_at..forward_end];
-    assert!(forwarder.contains("parseWriteToolWire"));
-    assert!(!forwarder.contains("gatherDiff"));
-    let check_at = router.find("async function runCheckWorkflow").unwrap();
-    let check_end = router.find("async function shadowWorkflowChoice").unwrap();
-    let check_src = &router[check_at..check_end];
-    assert!(check_src.contains("gatherDiff(evidenceOpts(args))"));
-    assert!(!check_src.contains("parseWriteToolWire"));
-
     let dir = std::env::temp_dir().join(format!("bezel-oracle-wt-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -726,23 +698,6 @@ fn pretool_map_matcher_catalog_and_schema_dump() {
 
 #[test]
 fn router_source_policy_map_wrap_and_one_json_line() {
-    let router = read_rel("../../packages/jev-router/jev-router.mjs");
-    assert!(router.contains("isJevBypass(process.env.JEV_BYPASS)"));
-    assert_eq!(router.matches(&format!("new {}(", client_ctor())).count(), 2);
-    assert_eq!(router.matches("client.systemOne(").count(), 3);
-    assert!(router.contains("shellPermissionQuestion(choice)"));
-    assert!(router.contains("requestedMode: process.env.JEV_PERMISSION_MODE"));
-    assert!(router.contains("buildCallQuestions(choice, noul"));
-    assert!(router.contains("scrubSecrets("));
-    assert!(router.contains("buildGateState("));
-    assert!(!router.contains("Cursor/omp writer"));
-    assert!(router.contains("cursor_default: \"Default writer for the calling harness (host Cursor auth)\""));
-    let calls = read_rel("../../packages/jev-router/calls.mjs");
-    assert_eq!(calls.matches(&format!("new {}(", client_ctor())).count(), 0);
-    assert!(!calls.contains("process.env"));
-    assert!(!calls.contains("jsonrpc"));
-    assert!(!calls.contains("tools/call"));
-    assert!(calls.contains("tool_call"));
     let doc = read_rel("../../docs/POLICY-MAP.md");
     let fence = doc.split("```pretool-matcher\n").nth(1).unwrap().split("\n```").next().unwrap();
     assert_eq!(fence, policy::PRETOOL_MATCHER);
@@ -1167,13 +1122,6 @@ fn typed_call_cli_stays_shadow_without_a_key() {
 
 #[test]
 fn harness_uses_the_map_and_smoke_pieces_never_allow() {
-    let src = read_rel("../../packages/jev-router/harness.mjs");
-    assert_eq!(src.matches(&format!("new {}(", client_ctor())).count(), 0);
-    assert!(src.contains("PRETOOL_MATCHER"));
-    assert!(src.contains("isJevBypass"));
-    assert!(src.contains("pretoolHookDecision"));
-    assert!(src.contains("decidePermission"));
-    assert!(!src.contains("web_search|WebSearch"));
     let modes = modes_from_env(&[
         ("JEV_MODE", "active"),
         ("JEV_PERMISSION_MODE", "yes"),

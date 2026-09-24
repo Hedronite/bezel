@@ -60,6 +60,12 @@ pub fn fixture_client() -> Client {
     construct_client(recorded_dir())
 }
 
+#[cfg(test)]
+pub(crate) fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poison| poison.into_inner())
+}
+
 pub fn run(args: &[String]) -> (i32, String) {
     if args.first().map(String::as_str) == Some("--version") && args.len() == 1 {
         return (0, format!("bezel-bridle {}\n", env!("CARGO_PKG_VERSION")));
@@ -255,8 +261,7 @@ mod tests {
     }
 
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        LOCK.lock().unwrap_or_else(|poison| poison.into_inner())
+        super::test_env_lock()
     }
 
     fn set_env(key: &str, value: Option<&str>) {

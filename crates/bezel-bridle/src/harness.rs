@@ -29,6 +29,7 @@ pub fn modes_from_env(pairs: &[(&str, &str)]) -> Modes {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookEvent {
     pub tool_name: String,
+    pub command: String,
 }
 
 pub fn parse_hook_event(text: &str) -> Result<HookEvent, &'static str> {
@@ -42,7 +43,8 @@ pub fn parse_hook_event(text: &str) -> Result<HookEvent, &'static str> {
     let tool_name = json_string(raw, "toolName")
         .or_else(|| json_string(raw, "tool_name"))
         .unwrap_or_default();
-    Ok(HookEvent { tool_name })
+    let command = json_string(raw, "command").unwrap_or_default();
+    Ok(HookEvent { tool_name, command })
 }
 
 fn json_string(text: &str, key: &str) -> Option<String> {
@@ -126,6 +128,7 @@ pub fn hook_command(stdin: &str, env: &[(&str, &str)]) -> (i32, String) {
     let modes = modes_from_env(env);
     let event = parse_hook_event(stdin).unwrap_or(HookEvent {
         tool_name: String::new(),
+        command: String::new(),
     });
     let first = decide_hook(&event, &modes, None);
     let matched = !event.tool_name.is_empty()
@@ -173,6 +176,7 @@ fn missing_key_verdict() -> GateVerdict {
 pub fn hook_on_text(text: &str, modes: &Modes, verdict: Option<&GateVerdict>) -> HookOut {
     let event = parse_hook_event(text).unwrap_or(HookEvent {
         tool_name: String::new(),
+        command: String::new(),
     });
     decide_hook(&event, modes, verdict)
 }

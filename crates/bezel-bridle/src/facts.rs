@@ -167,8 +167,87 @@ pub fn gather(opts: &GatherOpts) -> Gathered {
     }
 }
 
-fn diff_present(text: &str) -> bool {
+pub fn diff_present(text: &str) -> bool {
     !text.trim().is_empty()
+}
+
+pub struct Capabilities {
+    pub check: bool,
+    pub review: bool,
+    pub unavailable_check: &'static str,
+}
+
+pub fn available_capabilities(present: bool) -> Capabilities {
+    if present {
+        Capabilities {
+            check: true,
+            review: true,
+            unavailable_check: "",
+        }
+    } else {
+        Capabilities {
+            check: false,
+            review: false,
+            unavailable_check: "check requires a git diff",
+        }
+    }
+}
+
+/// Inverse of `write_tool_wire`. A non-JSON value is a path and an empty diff.
+pub fn parse_write_tool_wire(raw: &str) -> (String, String) {
+    if let Some(rest) = raw.strip_prefix('{') {
+        if let (Some(path), Some(proposed)) = (json_field(rest, "path"), json_field(rest, "proposed")) {
+            return (
+                path.replace(['\r', '\n'], ""),
+                clip_to_max_hunk_chars(&proposed, None),
+            );
+        }
+    }
+    (raw.to_string(), String::new())
+}
+
+pub fn scrub_secret_text(text: &str, secrets: &[&str]) -> String {
+    let mut out = text.to_string();
+    for secret in secrets {
+        if secret.len() >= 8 {
+            out = out.replace(secret, "[redacted]");
+        }
+    }
+    out
+}
+
+pub fn secret_object_key(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "typesafe_api_key" | "api_key" | "apikey" | "token" | "secret" | "password" | "authorization"
+    )
+}
+
+fn json_field(text: &str, key: &str) -> Option<String> {
+    let pattern = format!("\"{key}\"");
+    let found = text.find(&pattern)?;
+    let rest = text[found + pattern.len()..].trim_start().strip_prefix(':')?.trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let mut out = String::new();
+    let mut chars = rest.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(next) = chars.next() {
+                out.push(match next {
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    other => other,
+                });
+            }
+            continue;
+        }
+        if ch == '"' {
+            return Some(out);
+        }
+        out.push(ch);
+    }
+    None
 }
 
 fn write_path(input: &WriteBody) -> String {

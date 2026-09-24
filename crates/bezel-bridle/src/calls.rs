@@ -170,7 +170,7 @@ fn decide_json(mode: &str, tools: &[Tool], winner: &str, confidence: f64, probab
         mapped = "stop";
         code_deny = true;
     } else if let Some(tool) = picked {
-        match guard_effect(tool.effect) {
+        match guard_kind(tool.effect) {
             Guard::Missing => {
                 reason = "effect_missing";
                 code = Some("F456");
@@ -385,11 +385,63 @@ fn effect_class(effect: &str) -> Option<&str> {
     if known_effect(effect) { Some(effect) } else { None }
 }
 
-fn effect_allows(effect: &str) -> bool {
+pub fn effect_allows(effect: &str) -> bool {
     matches!(effect, "read" | "write" | "filesystem" | "network" | "external")
 }
 
-fn guard_effect(effect: &str) -> Guard {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectGuard {
+    pub allow: bool,
+    pub code: Option<&'static str>,
+    pub reason: &'static str,
+}
+
+pub fn guard_effect(effect: &str) -> EffectGuard {
+    if effect.is_empty() {
+        return EffectGuard {
+            allow: false,
+            code: Some("F456"),
+            reason: "effect_missing",
+        };
+    }
+    if !known_effect(effect) {
+        return EffectGuard {
+            allow: false,
+            code: Some("F456"),
+            reason: "effect_invalid",
+        };
+    }
+    if effect_allows(effect) {
+        return EffectGuard {
+            allow: true,
+            code: None,
+            reason: "obvious_effect",
+        };
+    }
+    EffectGuard {
+        allow: false,
+        code: Some("F454"),
+        reason: "effect_deny",
+    }
+}
+
+pub fn stated_keeps_optional_arg(noul: f64) -> bool {
+    noul > 0.5
+}
+
+pub fn rank_names<'a>(rows: &[(&'a str, f64)], limit: usize) -> Vec<&'a str> {
+    let mut rows: Vec<(&str, f64)> = rows.to_vec();
+    rows.sort_by(|left, right| {
+        right
+            .1
+            .partial_cmp(&left.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.0.cmp(right.0))
+    });
+    rows.into_iter().take(limit).map(|(name, _)| name).collect()
+}
+
+fn guard_kind(effect: &str) -> Guard {
     if effect.is_empty() {
         Guard::Missing
     } else if !known_effect(effect) {

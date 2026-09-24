@@ -3,7 +3,6 @@
   stdenv,
   fetchurl,
   nodejs,
-  makeWrapper,
   rustc,
   cargo,
   git,
@@ -27,7 +26,6 @@ stdenv.mkDerivation {
   src = ./.;
 
   nativeBuildInputs = [
-    makeWrapper
     nodejs
     rustc
     cargo
@@ -68,10 +66,6 @@ stdenv.mkDerivation {
     tar -xzf ${sdk} -C $out/lib/jev-router/node_modules/@typesafe-ai/sdk --strip-components=1
 
     mkdir -p $out/bin
-    # Live commands stay on the JavaScript client. Offline commands run the Rust binary.
-    makeWrapper ${lib.getExe nodejs} $out/bin/jev-router-node \
-      --add-flags "$out/lib/jev-router/jev-router.mjs" \
-      --prefix NODE_PATH : "$out/lib/jev-router/node_modules"
     # Secrets: never --set TYPESAFE_API_KEY / getEnv at build.
     install -m 755 "$BRIDLE_BIN" $out/bin/bezel-bridle
     if head -c 80 "$out/bin/bezel-bridle" | grep -q node; then
@@ -80,16 +74,17 @@ stdenv.mkDerivation {
     fi
     cat > $out/bin/jev-router << EOF
 #!/bin/sh
-for arg in "\$@"; do
-  case "\$arg" in
-    hook|--catalog|--schema|--schema-dump|--check)
-      exec $out/bin/bezel-bridle "\$@"
-      ;;
-  esac
-done
-exec $out/bin/jev-router-node "\$@"
+exec $out/bin/bezel-bridle "\$@"
 EOF
     chmod 755 $out/bin/jev-router
+    if grep -q jev-router-node $out/bin/jev-router; then
+      echo "jev-router must not exec jev-router-node" >&2
+      exit 1
+    fi
+    if [ -e $out/bin/jev-router-node ]; then
+      echo "jev-router-node must not be installed" >&2
+      exit 1
+    fi
 
     export NODE_PATH=$out/lib/jev-router/node_modules
     export JEV_MODE=shadow

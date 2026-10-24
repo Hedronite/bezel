@@ -7,7 +7,8 @@
 }:
 
 # Skills flake input is the sole SoT. This module only symlinks that store
-# path. Do not vendor a second skills/ tree in Bezel.
+# path. Do not vendor a second skills/ tree in Bezel. Nushell is on PATH so
+# the Lapis, Facet, and Geode skill bodies can run.
 # `programs.omapi` is deprecated. It renames to `programs.bezel`.
 
 {
@@ -30,9 +31,10 @@
       default =
         lib.optional (pkgs ? jev-router) pkgs.jev-router
         ++ lib.optional (pkgs ? cursor-agent-jev) pkgs.cursor-agent-jev
-        ++ lib.optional (pkgs ? grok-build-jev) pkgs.grok-build-jev;
-      defaultText = lib.literalExpression "[ pkgs.jev-router pkgs.cursor-agent-jev pkgs.grok-build-jev ]";
-      description = "Additional Bezel packages on PATH (jev-router, cursor-agent-jev, grok-build-jev).";
+        ++ lib.optional (pkgs ? grok-build-jev) pkgs.grok-build-jev
+        ++ lib.optional (pkgs ? nushell) pkgs.nushell;
+      defaultText = lib.literalExpression "[ pkgs.jev-router pkgs.cursor-agent-jev pkgs.grok-build-jev pkgs.nushell ]";
+      description = "Additional Bezel packages on PATH (jev-router, cursor-agent-jev, grok-build-jev, and the pinned Nushell used by skills).";
     };
 
     skillsSource = lib.mkOption {

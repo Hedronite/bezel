@@ -7,8 +7,8 @@
     # missed this slice) on the last Darwin-x64-supporting pin — not a skip-as-green.
     nixpkgs-darwin-x64.url = "github:NixOS/nixpkgs/nixpkgs-26.05-darwin";
 
-    # Sole skills input. Path stub until you point this at a skills repository.
-    # Do not add a second repo-root skills/ product tree.
+    # Sole skills input. Lapis, Facet, and Geode live in this tree with the
+    # Bezel stub skills. Do not add a second repo-root skills/ product tree.
     skills = {
       url = "path:./skills-stub";
       flake = false;
@@ -32,6 +32,14 @@
         "aarch64-linux"
         "x86_64-linux"
       ];
+
+      # Evaluated by the skills-cli check. A repo-root skills/ directory would
+      # be a second product tree next to inputs.skills (skills-stub).
+      skillsTreeOk =
+        if builtins.pathExists ./skills then
+          throw "Do not add a repo-root skills/ tree. Ship Lapis, Facet, and Geode through inputs.skills (skills-stub)."
+        else
+          "skills-stub";
 
       forAllSystems = f: lib.genAttrs systems (system: f system);
 
@@ -81,6 +89,8 @@
             grok-build-jev
             omp-runtime
             omp-pin
+            # Skill interpreter. Pinned by the nixpkgs lock, not a second input.
+            nushell
             ;
           default = pkgs.bezel;
         }
@@ -665,6 +675,20 @@
               exit 1
             fi
 
+            echo ok >"$out"
+          '';
+
+          # Lapis, Facet, and Geode skill bodies: one JSON envelope, read-only.
+          skills-cli = pkgs.runCommand "skills-cli" {
+            nativeBuildInputs = [
+              pkgs.nushell
+              pkgs.python3
+              pkgs.bash
+            ];
+          } ''
+            set -eu
+            test "${skillsTreeOk}" = skills-stub
+            bash ${./scripts/check-skill-cli.sh} ${./skills-stub}
             echo ok >"$out"
           '';
         }

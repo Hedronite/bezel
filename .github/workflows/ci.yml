@@ -88,6 +88,7 @@ jobs:
             test "$(nix eval --raw ".#packages.$sys.jev-router.pname")" = jev-router
             test "$(nix eval --raw ".#packages.$sys.cursor-agent-jev.name")" = cursor-agent-jev
             test "$(nix eval --raw ".#packages.$sys.grok-build-jev.name")" = grok-build-jev
+            test -n "$(nix eval --raw ".#packages.$sys.nushell.version")"
             nix eval --json ".#packages.$sys.omp-pin.meta.platforms"
           done
 

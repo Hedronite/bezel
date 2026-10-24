@@ -18,5 +18,18 @@ Shipped skills:
 | `bootstrap` | Placeholder so the input is a valid skills directory (`*/SKILL.md`) |
 | `check` | Shadow Jev-first diff check (`jev-router --check`). Empty findings ≠ approval |
 | `laws` | Bend2 `LAWS.bend` for the bridle. The harness loads it. Bezel does not become the harness |
+| `lapis` | Read-only vault search and read through `lapis --json` (`lapis.nu`) |
+| `facet` | Read-only request history through `facet … --json` (`facet.nu`). No bodies, blobs, or `request run` |
+| `geode` | Metadata-only custody status through `geode --output json` (`geode.nu`). Anything else is refused |
+
+`lapis`, `facet`, and `geode` are the default agent interface for those tools.
+Each directory is a short `SKILL.md` plus one Nushell script. Every command
+prints the same JSON envelope: `{ ok, command, exit, data, error }`. The
+Nushell that runs them is the one pinned by this flake's nixpkgs lock. MCP
+servers for those tools stay supported; this tree does not turn them off.
+
+Copy or link one directory into another harness's skills folder
+(`~/.agents/skills/` or `~/.claude/skills/`). With Home Manager, the whole
+input is already linked at `~/.config/omp/agent/skills`.
 
 See [docs/SPIKE-stanley.md](../docs/SPIKE-stanley.md).

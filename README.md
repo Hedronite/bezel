@@ -40,7 +40,7 @@ Bezel is the supplement, not the harness. It ships the suite in one Nix flake: s
 
 | Piece | What you get |
 | --- | --- |
-| Skills | Flake input `inputs.skills`. Each skill is a directory with `SKILL.md`. Home Manager symlinks that store path to the directory the harness already reads. |
+| Skills | Flake input `inputs.skills` (`skills-stub/`). Each skill is a directory with `SKILL.md`. Lapis, Facet, and Geode default to that skill plus the CLI. Home Manager symlinks the store path to the directory the harness already reads. |
 | Jev | `jev-router` asks Typesafe for one policy decision and prints one JSON verdict. Shadow, the default, logs the verdict and does not block. |
 | Toolkit | `jev-router --catalog` prints a small tool index. `--schema NAME` prints one JSON Schema. Reading a schema does not allow the tool. `--check` is a shadow diff check. |
 | Cursor | `cursor-agent-jev` runs the gate, then execs `cursor-agent`. |
@@ -99,6 +99,7 @@ The product name is Bezel. The repository is [VirtualMachinist/bezel](https://gi
 | **`jev-router`** | Node router. Asks Typesafe for a Choice and prints a JSON verdict. Loop-stop (`continue` / `stop` / `escalate`), `jev-router --check` for a shadow diff check, shadow permission catalogs, and a small tool catalog (`--catalog`, `--schema NAME`). |
 | **`cursor-agent-jev`** | Runs `jev-router`, then execs `cursor-agent` (`cursor-agent` must already be on `PATH`). Shadow never blocks. Active honors continue and `gate: auto` only. `--catalog` and `--schema` print and do not exec. |
 | **`grok-build-jev`** | Grok Build PreToolUse adapter. Calls `jev-router` and prints `defer` or `deny`. Does not install a host hook. |
+| **`nushell`** | Interpreter for the Lapis, Facet, and Geode skill bodies. The version is the nixpkgs pin in `flake.lock`. |
 
 `packages.default` is `bezel`.
 
@@ -185,7 +186,32 @@ How to run: [docs/GROK-BUILD.md](docs/GROK-BUILD.md).
 
 ## Skills
 
-Skills are a flake input, and that input is the only skills tree Bezel installs. This repo ships `skills-stub` so the input is a valid skills tree (`*/SKILL.md`) on day one. The stub includes `bootstrap` and a shadow `check` skill (`jev-router --check`). Home Manager symlinks that store path to `~/.config/omp/agent/skills`. When you have a skills repo, change `inputs.skills.url` and the lock. Do not copy a second `skills/` tree into this overlay.
+Skills are a flake input, and that input is the only skills tree Bezel installs. This repo ships them in `skills-stub/` (`inputs.skills`). Home Manager symlinks that store path to `~/.config/omp/agent/skills`. There is no second repo-root `skills/` tree. When you have a skills repo, change `inputs.skills.url` and the lock.
+
+The tree includes `bootstrap`, the shadow `check` skill (`jev-router --check`), and `laws`. It also includes shared read-only skills for Lapis, Facet, and Geode.
+
+### Agent use: skills + CLI first, MCP still shipped
+
+The default way for an agent to use Lapis, Facet, or Geode is the bundled skill. In this repo that directory is `skills-stub/<name>/`. After install it is `~/.config/omp/agent/skills/<name>/`. A short `SKILL.md` is what the harness reads to decide when to use it, plus a Nushell body (`nu <name>.nu`) that calls the CLI with JSON output. Every command prints the same envelope: `{ ok, command, exit, data, error }`.
+
+The MCP server for each tool (`lapis mcp`, `facet mcp`, `geode mcp`) stays supported and works the same as that tool ships it. Bezel does not disable MCP.
+
+Why the skill is the default:
+
+- **Context.** An MCP server adds every tool's name, description and input schema to the model's context, often on every request, whether or not the tools are used. Many harnesses can only turn a whole server on or off. A skill costs a few dozen tokens of description until it is used.
+- **Determinism.** The skill body is fixed code over a versioned JSON contract, so results are the same each time.
+- **Small models.** Local models with short context windows feel the schema cost most.
+
+Use the MCP server when your harness defers or filters MCP tool schemas (loading them only on demand, or letting you enable single tools), or when the client has no shell.
+
+`programs.bezel.enable` puts the pinned Nushell on `PATH` and links the whole tree for omp. Install one skill into another harness by copying or linking `skills-stub/<name>/` into that harness's skills directory (for example `~/.agents/skills/` or `~/.claude/skills/`).
+
+```sh
+nix build .#nushell
+nu skills-stub/lapis/lapis.nu status
+```
+
+These three scripts are read-only. Facet never requests history bodies, blobs, `diff --bodies`, or `request run`. Geode is metadata only and refuses every other command.
 
 ## Platforms
 
@@ -210,7 +236,7 @@ If a later release drops a platform build, `packages/omp-pin.nix` **throws** for
 - Jev defaults to shadow. `jev-router --check` is the shadow diff check. Empty findings are not approval. Loop-stop is shadow-first. Active `stop` and `escalate` do not exec.
 - The tool catalog is a small always-on index of the existing policy ids. Full schema is `jev-router --schema NAME` and is not an allow. Permission catalogs stay shadow.
 - `grok-build-jev` adapts those controls for Grok Build. Default modes stay shadow. The harness does not install a host hook.
-- Skills ship as `skills-stub` until you change the input URL.
+- Skills ship as `skills-stub`, the flake's only skills tree. Lapis, Facet, and Geode are read-only skills there: skill plus CLI is the default, and MCP remains supported. Nushell is pinned by the nixpkgs lock.
 - Nix packaging stays. The router stays JavaScript.
 
 ## Contributing

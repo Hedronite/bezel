@@ -37,8 +37,11 @@ servers for those tools stay supported; this tree does not turn them off.
 - `~/.grok/skills`
 - `~/.cursor/skills`
 
-A second run leaves a file alone when its bytes already match.
-`scripts/install-user-skills.sh --check` reports drift and writes nothing.
-Unrelated skill directories already in those folders are left in place.
+A second run leaves a file alone when its bytes already match, and it keeps
+that file's mode. If a managed file already exists with different bytes, or
+the path is a symlink, `scripts/install-user-skills.sh` prints a drift report
+and writes nothing. `--force` replaces the bytes and keeps the existing mode.
+`--check` reports drift and writes nothing. Unrelated skill directories
+already in those folders are left in place.
 
 See [docs/SPIKE-stanley.md](../../docs/SPIKE-stanley.md).

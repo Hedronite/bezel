@@ -204,7 +204,7 @@ Why the skill is the default:
 
 Use the MCP server when your harness defers or filters MCP tool schemas (loading them only on demand, or letting you enable single tools), or when the client has no shell.
 
-`programs.bezel.enable` puts the pinned Nushell on `PATH` and copies each skill directory into the four user directories above. The copies are regular files. A second activation does not rewrite a file whose bytes already match. `scripts/install-user-skills.sh --check .agents/skills "$HOME"` reports drift and writes nothing.
+`programs.bezel.enable` puts the pinned Nushell on `PATH` and copies each skill directory into the four user directories above. The copies are regular files. A second activation leaves a file alone when its bytes already match, and it keeps that file's mode. If a managed file already exists with different bytes, or the path is a symlink, the activation prints a drift report and writes nothing, so a live `~/.agents/skills/lapis/lapis.nu` stays in place for `~/.local/bin/lapisq`. Repair with `scripts/install-user-skills.sh --force .agents/skills "$HOME"`, which replaces the bytes and keeps the mode the file already had. `--check` reports drift and writes nothing.
 
 ```sh
 nix build .#nushell

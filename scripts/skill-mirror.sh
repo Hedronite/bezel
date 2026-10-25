@@ -101,9 +101,12 @@ skill_assert_source_file() {
 }
 
 # mode is apply or check. apply rewrites dest until it matches src.
+# keep_mode=1 leaves an existing directory or file mode alone. A file that
+# already exists keeps that mode after a byte rewrite. New paths still get
+# the normalized mode.
 skill_sync_tree() {
-  local src=$1 dest=$2 mode=$3
-  local rel parent tmp
+  local src=$1 dest=$2 mode=$3 keep_mode=${4:-0}
+  local rel parent tmp preserved dest_ready nested_ready
   if [[ $mode != apply && $mode != check ]]; then
     skill_fail "unknown sync mode: $mode"
   fi
@@ -112,6 +115,10 @@ skill_sync_tree() {
     skill_fail "source skill is not a directory: $src"
   fi
 
+  dest_ready=0
+  if [[ -d $dest && ! -L $dest ]]; then
+    dest_ready=1
+  fi
   if [[ -L $dest ]]; then
     if [[ $mode == check ]]; then
       skill_fail "symlink: $dest"
@@ -129,7 +136,7 @@ skill_sync_tree() {
     fi
     mkdir -p -- "$dest"
   fi
-  if [[ $mode == apply ]] && ! skill_mode_ok "$src" "$dest"; then
+  if [[ $mode == apply && ( $keep_mode == 0 || $dest_ready == 0 ) ]] && ! skill_mode_ok "$src" "$dest"; then
     skill_apply_mode "$src" "$dest"
   fi
 
@@ -137,6 +144,10 @@ skill_sync_tree() {
     rel=${rel#./}
     skill_assert_source_file "$src/$rel"
     if [[ -d $src/$rel ]]; then
+      nested_ready=0
+      if [[ -d $dest/$rel && ! -L $dest/$rel ]]; then
+        nested_ready=1
+      fi
       if [[ -L $dest/$rel ]]; then
         if [[ $mode == check ]]; then
           skill_fail "symlink: $dest/$rel"
@@ -154,7 +165,7 @@ skill_sync_tree() {
         fi
         mkdir -p -- "$dest/$rel"
       fi
-      if [[ $mode == apply ]] && ! skill_mode_ok "$src/$rel" "$dest/$rel"; then
+      if [[ $mode == apply && ( $keep_mode == 0 || $nested_ready == 0 ) ]] && ! skill_mode_ok "$src/$rel" "$dest/$rel"; then
         skill_apply_mode "$src/$rel" "$dest/$rel"
       fi
     else
@@ -170,17 +181,21 @@ skill_sync_tree() {
         if [[ $mode == check ]]; then
           skill_fail "byte drift: $dest/$rel"
         fi
-      elif ! skill_exec_ok "$src/$rel" "$dest/$rel"; then
+      elif [[ $keep_mode == 0 ]] && ! skill_exec_ok "$src/$rel" "$dest/$rel"; then
         if [[ $mode == check ]]; then
           skill_fail "mode drift: $dest/$rel"
         fi
         skill_apply_mode "$src/$rel" "$dest/$rel"
         continue
-      elif [[ $mode == apply ]] && ! skill_mode_ok "$src/$rel" "$dest/$rel"; then
+      elif [[ $mode == apply && $keep_mode == 0 ]] && ! skill_mode_ok "$src/$rel" "$dest/$rel"; then
         skill_apply_mode "$src/$rel" "$dest/$rel"
         continue
       else
         continue
+      fi
+      preserved=""
+      if [[ $keep_mode == 1 && -f $dest/$rel && ! -L $dest/$rel ]]; then
+        preserved=$(skill_file_mode "$dest/$rel")
       fi
       parent=$(dirname -- "$dest/$rel")
       mkdir -p -- "$parent"
@@ -188,7 +203,11 @@ skill_sync_tree() {
       tmp=$(mktemp "$parent/.bezel-skill.XXXXXX")
       cat -- "$src/$rel" >"$tmp"
       mv -f -- "$tmp" "$dest/$rel"
-      skill_apply_mode "$src/$rel" "$dest/$rel"
+      if [[ -n $preserved ]]; then
+        chmod "$preserved" "$dest/$rel"
+      else
+        skill_apply_mode "$src/$rel" "$dest/$rel"
+      fi
     fi
   done < <(cd -- "$src" && find . -mindepth 1 -print0)
 
@@ -278,6 +297,42 @@ skill_sync_user_root() {
     mkdir -p -- "$dest"
   fi
   for name in "${names[@]}"; do
-    skill_sync_tree "$src/$name" "$dest/$name" "$mode"
+    skill_sync_tree "$src/$name" "$dest/$name" "$mode" 1
   done
+}
+
+# User install must not overwrite a regular file whose bytes differ, or replace
+# a symlink, unless the caller passes --force. Prints every conflict.
+# Returns 1 when any exist. A missing file is not a conflict.
+skill_user_conflicts() {
+  local src=$1 dest=$2
+  local name rel path status=0
+  local -a names=()
+  if [[ ! -e $dest || -L $dest || ! -d $dest ]]; then
+    return 0
+  fi
+  mapfile -t names < <(skill_dir_names "$src")
+  for name in "${names[@]}"; do
+    if [[ ! -d $dest/$name || -L $dest/$name ]]; then
+      continue
+    fi
+    while IFS= read -r -d '' rel; do
+      rel=${rel#./}
+      [[ -f $src/$name/$rel && ! -L $src/$name/$rel ]] || continue
+      path=$dest/$name/$rel
+      if [[ -L $path ]]; then
+        printf 'install-user-skills: symlink: %s\n' "$path" >&2
+        status=1
+      elif [[ -f $path ]]; then
+        if ! cmp -s -- "$src/$name/$rel" "$path"; then
+          printf 'install-user-skills: byte drift: %s\n' "$path" >&2
+          status=1
+        fi
+      elif [[ -e $path ]]; then
+        printf 'install-user-skills: not a regular file: %s\n' "$path" >&2
+        status=1
+      fi
+    done < <(cd -- "$src/$name" && find . -mindepth 1 -type f -print0)
+  done
+  return "$status"
 }

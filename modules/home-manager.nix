@@ -55,8 +55,10 @@
   config = lib.mkIf config.programs.bezel.enable {
     home.packages = [ config.programs.bezel.package ] ++ config.programs.bezel.extraPackages;
 
-    # Regular files, one tree per harness. A second activation leaves matching
-    # bytes untouched. lib.hm is Home Manager's module library.
+    # Regular files, one tree per harness. Matching bytes stay in place,
+    # including their mode. Different bytes or a symlinked managed file fail
+    # this activation: it does not pass --force, and the existing file is left
+    # unchanged. lib.hm is Home Manager's module library.
     home.activation.bezelUserSkills =
       let
         dag = lib.hm.dag or (throw "programs.bezel needs Home Manager (lib.hm.dag)");

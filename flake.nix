@@ -10,7 +10,7 @@
     # Sole skills input. Lapis, Facet, and Geode live in this tree with the
     # Bezel stub skills. Do not add a second repo-root skills/ product tree.
     skills = {
-      url = "path:./skills-stub";
+      url = "path:./.agents/skills";
       flake = false;
     };
   };
@@ -34,12 +34,17 @@
       ];
 
       # Evaluated by the skills-cli check. A repo-root skills/ directory would
-      # be a second product tree next to inputs.skills (skills-stub).
+      # be a second product tree next to inputs.skills (.agents/skills).
+      # .omp/skills would shadow the other copies. Codex reads .agents/skills.
       skillsTreeOk =
         if builtins.pathExists ./skills then
-          throw "Do not add a repo-root skills/ tree. Ship Lapis, Facet, and Geode through inputs.skills (skills-stub)."
+          throw "Do not add a repo-root skills/ tree. Ship Lapis, Facet, and Geode through inputs.skills (.agents/skills)."
+        else if builtins.pathExists ./.omp/skills then
+          throw "Do not add .omp/skills. It shadows the other harness copies."
+        else if builtins.pathExists ./.codex/skills then
+          throw "Do not add .codex/skills. Codex reads .agents/skills."
         else
-          "skills-stub";
+          "agents-skills";
 
       forAllSystems = f: lib.genAttrs systems (system: f system);
 
@@ -360,14 +365,14 @@
             export HOME=$TMPDIR/home
             mkdir -p "$CARGO_HOME" "$HOME" "$CARGO_TARGET_DIR"
             work=$TMPDIR/bridle
-            mkdir -p "$work/crates/bezel-bridle" "$work/packages" "$work/docs" "$work/skills-stub"
+            mkdir -p "$work/crates/bezel-bridle" "$work/packages" "$work/docs" "$work/.agents/skills"
             cp ${./crates/bezel-bridle}/Cargo.toml ${./crates/bezel-bridle}/Cargo.lock "$work/crates/bezel-bridle/"
             cp -r ${./crates/bezel-bridle}/src "$work/crates/bezel-bridle/src"
             cp -r ${./packages/jev-router} "$work/packages/jev-router"
             cp ${./docs/POLICY-MAP.md} "$work/docs/POLICY-MAP.md"
             cp ${./packages/cursor-agent-jev.nix} "$work/packages/cursor-agent-jev.nix"
             cp ${./packages/bezel-planes-shim.sh} "$work/packages/bezel-planes-shim.sh"
-            cp -r ${./skills-stub}/laws "$work/skills-stub/laws"
+            cp -r ${./.agents/skills}/laws "$work/.agents/skills/laws"
             chmod -R u+w "$work"
             test -f "$work/crates/bezel-bridle/src/oracle.rs"
             cargo test --offline --manifest-path "$work/crates/bezel-bridle/Cargo.toml"
@@ -687,8 +692,10 @@
             ];
           } ''
             set -eu
-            test "${skillsTreeOk}" = skills-stub
-            bash ${./scripts/check-skill-cli.sh} ${./skills-stub}
+            test "${skillsTreeOk}" = agents-skills
+            bash ${./scripts}/check-skill-copies.sh ${./.agents/skills} ${./.claude/skills} ${./.grok/skills} ${./.cursor/skills}
+            bash ${./scripts}/check-user-skills.sh ${./.agents/skills}
+            bash ${./scripts}/check-skill-cli.sh ${./.agents/skills}
             echo ok >"$out"
           '';
         }

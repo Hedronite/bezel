@@ -5,7 +5,7 @@ set -euo pipefail
 
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 root=$(CDPATH= cd -- "$script_dir/.." && pwd)
-skills=${1:-$root/skills-stub}
+skills=${1:-$root/.agents/skills}
 nu=${NU:-nu}
 
 fail() {
@@ -14,7 +14,7 @@ fail() {
 }
 
 if [[ -f "$root/flake.nix" && -d "$root/skills" ]]; then
-  fail "repo-root skills/ is a second product tree; ship skills through skills-stub/"
+  fail "repo-root skills/ is a second product tree; ship skills through .agents/skills/"
 fi
 
 command -v "$nu" >/dev/null || fail "nushell (nu) is not on PATH"

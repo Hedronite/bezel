@@ -6,9 +6,10 @@
   ...
 }:
 
-# Skills flake input is the sole SoT. This module only symlinks that store
-# path. Do not vendor a second skills/ tree in Bezel. Nushell is on PATH so
-# the Lapis, Facet, and Geode skill bodies can run.
+# Skills flake input is the sole SoT. This module copies that tree into each
+# harness's user directory as regular files. Do not vendor a second skills/
+# tree in Bezel. Nushell is on PATH so the Lapis, Facet, and Geode skill
+# bodies can run.
 # `programs.omapi` is deprecated. It renames to `programs.bezel`.
 
 {
@@ -43,9 +44,10 @@
       defaultText = lib.literalExpression "inputs.skills";
       description = ''
         Sole skills source of truth: the flake `inputs.skills` store path.
-        Home Manager only symlinks this path to ~/.config/omp/agent/skills,
-        the directory the omp harness reads. Bezel does not invent a second tree.
-        Do not point this at a second in-repo skills/ copy.
+        Home Manager copies each skill directory as regular files into
+        ~/.agents/skills, ~/.claude/skills, ~/.grok/skills, and ~/.cursor/skills.
+        Bezel does not invent a second tree. Do not point this at a second
+        in-repo skills/ copy.
       '';
     };
   };
@@ -53,6 +55,18 @@
   config = lib.mkIf config.programs.bezel.enable {
     home.packages = [ config.programs.bezel.package ] ++ config.programs.bezel.extraPackages;
 
-    xdg.configFile."omp/agent/skills".source = config.programs.bezel.skillsSource;
+    # Regular files, one tree per harness. Matching bytes stay in place,
+    # including their mode. Different bytes or a symlinked managed file fail
+    # this activation: it does not pass --force, and the existing file is left
+    # unchanged. lib.hm is Home Manager's module library.
+    home.activation.bezelUserSkills =
+      let
+        dag = lib.hm.dag or (throw "programs.bezel needs Home Manager (lib.hm.dag)");
+      in
+      dag.entryAfter [ "writeBoundary" ] ''
+        ${pkgs.bash}/bin/bash ${../scripts}/install-user-skills.sh ${
+          lib.escapeShellArg (toString config.programs.bezel.skillsSource)
+        } ${lib.escapeShellArg config.home.homeDirectory}
+      '';
   };
 }

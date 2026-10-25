@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Rewrite .claude/skills, .grok/skills, and .cursor/skills from .agents/skills.
+# Copies are regular files. The canonical tree is the only one to edit.
+
+set -euo pipefail
+
+script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+# shellcheck source=skill-mirror.sh
+source "$script_dir/skill-mirror.sh"
+
+canonical=$root/.agents/skills
+harnesses=(
+  "$root/.claude/skills"
+  "$root/.grok/skills"
+  "$root/.cursor/skills"
+)
+
+for dest in "${harnesses[@]}"; do
+  skill_sync_root "$canonical" "$dest" apply
+done

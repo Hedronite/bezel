@@ -42,11 +42,11 @@
     "skills": {
       "flake": false,
       "locked": {
-        "path": "./skills-stub",
+        "path": "./.agents/skills",
         "type": "path"
       },
       "original": {
-        "path": "./skills-stub",
+        "path": "./.agents/skills",
         "type": "path"
       },
       "parent": []

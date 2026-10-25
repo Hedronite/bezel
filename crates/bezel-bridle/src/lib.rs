@@ -67,7 +67,7 @@ mod tests {
     }
 
     fn laws_sentence() -> String {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skills-stub/laws/LAWS.bend");
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.agents/skills/laws/LAWS.bend");
         std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()))
     }
 

@@ -31,7 +31,7 @@ nix build .#jev-router
   --diff-file packages/jev-router/testdata/skip-marker.diff
 ```
 
-Skill (Home Manager skills input): `skills-stub/check/SKILL.md`.
+Skill (Home Manager skills input): `.agents/skills/check/SKILL.md`.
 
 ## What you get
 

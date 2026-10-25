@@ -6,7 +6,7 @@ set -eu
 export BEND_NO_TELEMETRY="${BEND_NO_TELEMETRY:-1}"
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-proof=${1:-"$root/skills-stub/laws/PROOF.bend"}
+proof=${1:-"$root/.agents/skills/laws/PROOF.bend"}
 
 if [ ! -f "$proof" ]; then
   printf 'bend-gate: no proof at %s\n' "$proof" >&2

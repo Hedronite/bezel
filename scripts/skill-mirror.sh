@@ -38,6 +38,40 @@ skill_dir_names() {
   printf '%s\n' "${names[@]}" | sort
 }
 
+skill_file_mode() {
+  if stat -c %a "$1" >/dev/null 2>&1; then
+    stat -c %a "$1"
+  else
+    stat -f %OLp "$1"
+  fi
+}
+
+# Directories are 755. A file keeps the executable bit and is otherwise 644.
+# Nix store paths drop the owner-write bit (755 -> 555, 644 -> 444); the
+# installed tree has to stay writable or the next run cannot repair it.
+skill_dest_mode() {
+  local path=$1
+  local mode
+  if [[ -d $path && ! -L $path ]]; then
+    printf '755\n'
+    return
+  fi
+  mode=$(skill_file_mode "$path")
+  if [[ $((8#$mode & 0111)) -ne 0 ]]; then
+    printf '755\n'
+  else
+    printf '644\n'
+  fi
+}
+
+skill_mode_ok() {
+  [[ $(skill_file_mode "$2") == "$(skill_dest_mode "$1")" ]]
+}
+
+skill_apply_mode() {
+  chmod "$(skill_dest_mode "$1")" "$2"
+}
+
 skill_assert_source_file() {
   local path=$1
   if [[ -L $path ]]; then
@@ -78,6 +112,12 @@ skill_sync_tree() {
     fi
     mkdir -p -- "$dest"
   fi
+  if ! skill_mode_ok "$src" "$dest"; then
+    if [[ $mode == check ]]; then
+      skill_fail "mode drift: $dest"
+    fi
+    skill_apply_mode "$src" "$dest"
+  fi
 
   while IFS= read -r -d '' rel; do
     rel=${rel#./}
@@ -100,6 +140,12 @@ skill_sync_tree() {
         fi
         mkdir -p -- "$dest/$rel"
       fi
+      if ! skill_mode_ok "$src/$rel" "$dest/$rel"; then
+        if [[ $mode == check ]]; then
+          skill_fail "mode drift: $dest/$rel"
+        fi
+        skill_apply_mode "$src/$rel" "$dest/$rel"
+      fi
     else
       if [[ -L $dest/$rel ]]; then
         if [[ $mode == check ]]; then
@@ -113,6 +159,12 @@ skill_sync_tree() {
         if [[ $mode == check ]]; then
           skill_fail "byte drift: $dest/$rel"
         fi
+      elif ! skill_mode_ok "$src/$rel" "$dest/$rel"; then
+        if [[ $mode == check ]]; then
+          skill_fail "mode drift: $dest/$rel"
+        fi
+        skill_apply_mode "$src/$rel" "$dest/$rel"
+        continue
       else
         continue
       fi
@@ -122,6 +174,7 @@ skill_sync_tree() {
       tmp=$(mktemp "$parent/.bezel-skill.XXXXXX")
       cat -- "$src/$rel" >"$tmp"
       mv -f -- "$tmp" "$dest/$rel"
+      skill_apply_mode "$src/$rel" "$dest/$rel"
     fi
   done < <(cd -- "$src" && find . -mindepth 1 -print0)
 

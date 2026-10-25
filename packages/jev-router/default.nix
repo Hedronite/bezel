@@ -32,14 +32,14 @@ stdenv.mkDerivation {
     export HOME=$TMPDIR/home
     mkdir -p "$CARGO_HOME" "$HOME"
     work=$TMPDIR/bridle
-    mkdir -p "$work/crates/bezel-bridle" "$work/packages/jev-router" "$work/docs" "$work/skills-stub"
+    mkdir -p "$work/crates/bezel-bridle" "$work/packages/jev-router" "$work/docs" "$work/.agents/skills"
     cp ${repoRoot}/crates/bezel-bridle/Cargo.toml ${repoRoot}/crates/bezel-bridle/Cargo.lock "$work/crates/bezel-bridle/"
     cp -r ${repoRoot}/crates/bezel-bridle/src "$work/crates/bezel-bridle/src"
     cp -r ${repoRoot}/packages/jev-router/testdata "$work/packages/jev-router/testdata"
     cp ${repoRoot}/docs/POLICY-MAP.md "$work/docs/POLICY-MAP.md"
     cp ${repoRoot}/packages/cursor-agent-jev.nix "$work/packages/cursor-agent-jev.nix"
     cp ${repoRoot}/packages/bezel-planes-shim.sh "$work/packages/bezel-planes-shim.sh"
-    cp -r ${repoRoot}/skills-stub/laws "$work/skills-stub/laws"
+    cp -r ${repoRoot}/.agents/skills/laws "$work/.agents/skills/laws"
     chmod -R u+w "$work"
     echo "bezel-bridle oracle fixtures"
     export CARGO_TARGET_DIR=$work/target

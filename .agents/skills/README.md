@@ -1,15 +1,17 @@
-# Bezel skills-stub
+# Bezel skills
 
-This directory is the skills input for the Bezel flake until you point
-`inputs.skills` at your own skills repo. The flake uses this path:
+This directory is the canonical skills tree and the flake input:
 
 ```nix
-inputs.skills.url = "path:./skills-stub";
+inputs.skills.url = "path:./.agents/skills";
 ```
 
 When you have a skills repo, change only that URL (and lock). Do **not** add
-a second repo-root `skills/` tree — the Home Manager module only symlinks
-`${inputs.skills}`.
+a repo-root `skills/` tree, `.omp/skills/`, or `.codex/skills/`.
+
+`scripts/sync-skills` rewrites the regular-file copies in `.claude/skills/`,
+`.grok/skills/`, and `.cursor/skills/` from this tree. Edit here, then sync.
+Those copies are not a second source.
 
 Shipped skills:
 
@@ -28,8 +30,15 @@ prints the same JSON envelope: `{ ok, command, exit, data, error }`. The
 Nushell that runs them is the one pinned by this flake's nixpkgs lock. MCP
 servers for those tools stay supported; this tree does not turn them off.
 
-Copy or link one directory into another harness's skills folder
-(`~/.agents/skills/` or `~/.claude/skills/`). With Home Manager, the whole
-input is already linked at `~/.config/omp/agent/skills`.
+`programs.bezel.enable` copies each skill directory, as regular files, into:
 
-See [docs/SPIKE-stanley.md](../docs/SPIKE-stanley.md).
+- `~/.agents/skills`
+- `~/.claude/skills`
+- `~/.grok/skills`
+- `~/.cursor/skills`
+
+A second run leaves a file alone when its bytes already match.
+`scripts/install-user-skills.sh --check` reports drift and writes nothing.
+Unrelated skill directories already in those folders are left in place.
+
+See [docs/SPIKE-stanley.md](../../docs/SPIKE-stanley.md).

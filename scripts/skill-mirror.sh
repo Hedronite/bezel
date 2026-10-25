@@ -72,6 +72,23 @@ skill_apply_mode() {
   chmod "$(skill_dest_mode "$1")" "$2"
 }
 
+# Nix drops the owner-write bit, so 755 and 555 are the same executable file.
+skill_is_exec() {
+  local mode
+  mode=$(skill_file_mode "$1")
+  [[ $((8#$mode & 0111)) -ne 0 ]]
+}
+
+skill_exec_ok() {
+  local src_exec=1 dest_exec=1
+  if [[ -d $1 && ! -L $1 ]]; then
+    return 0
+  fi
+  skill_is_exec "$1" || src_exec=0
+  skill_is_exec "$2" || dest_exec=0
+  [[ $src_exec -eq $dest_exec ]]
+}
+
 skill_assert_source_file() {
   local path=$1
   if [[ -L $path ]]; then
@@ -112,10 +129,7 @@ skill_sync_tree() {
     fi
     mkdir -p -- "$dest"
   fi
-  if ! skill_mode_ok "$src" "$dest"; then
-    if [[ $mode == check ]]; then
-      skill_fail "mode drift: $dest"
-    fi
+  if [[ $mode == apply ]] && ! skill_mode_ok "$src" "$dest"; then
     skill_apply_mode "$src" "$dest"
   fi
 
@@ -140,10 +154,7 @@ skill_sync_tree() {
         fi
         mkdir -p -- "$dest/$rel"
       fi
-      if ! skill_mode_ok "$src/$rel" "$dest/$rel"; then
-        if [[ $mode == check ]]; then
-          skill_fail "mode drift: $dest/$rel"
-        fi
+      if [[ $mode == apply ]] && ! skill_mode_ok "$src/$rel" "$dest/$rel"; then
         skill_apply_mode "$src/$rel" "$dest/$rel"
       fi
     else
@@ -159,10 +170,13 @@ skill_sync_tree() {
         if [[ $mode == check ]]; then
           skill_fail "byte drift: $dest/$rel"
         fi
-      elif ! skill_mode_ok "$src/$rel" "$dest/$rel"; then
+      elif ! skill_exec_ok "$src/$rel" "$dest/$rel"; then
         if [[ $mode == check ]]; then
           skill_fail "mode drift: $dest/$rel"
         fi
+        skill_apply_mode "$src/$rel" "$dest/$rel"
+        continue
+      elif [[ $mode == apply ]] && ! skill_mode_ok "$src/$rel" "$dest/$rel"; then
         skill_apply_mode "$src/$rel" "$dest/$rel"
         continue
       else

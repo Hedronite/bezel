@@ -40,12 +40,12 @@ Bezel is the supplement, not the harness. It ships the suite in one Nix flake: s
 
 | Piece | What you get |
 | --- | --- |
-| Skills | Flake input `inputs.skills` (`.agents/skills/`). Each skill is a directory with `SKILL.md`. Lapis, Facet, and Geode default to that skill plus the CLI. Home Manager copies each skill directory as regular files into the user directory each harness reads. |
+| Skills | Flake input `inputs.skills` (`.agents/skills/`). Each skill is a directory with `SKILL.md`. Lapis, Facet, Geode, and Phantom default to that skill plus the CLI. Home Manager copies each skill directory as regular files into the user directory each harness reads. |
 | Jev | `jev-router` asks Typesafe for one policy decision and prints one JSON verdict. Shadow, the default, logs the verdict and does not block. |
 | Toolkit | `jev-router --catalog` prints a small tool index. `--schema NAME` prints one JSON Schema. Reading a schema does not allow the tool. `--check` is a shadow diff check. |
 | Cursor | `cursor-agent-jev` runs the gate, then execs `cursor-agent`. |
 | Grok Build | `grok-build-jev` is the PreToolUse adapter. It calls `jev-router` and prints `defer` or `deny`. It does not install a host hook. |
-| omp, optional | Package `bezel` installs `bezel-omp`, which runs upstream `omp` from `PATH` or `$OMP_BIN`. `bezel-pinned` points that same wrap at a fetched release binary. `omapi` is a symlink to `bezel-omp` for one release. |
+| omp, optional | Package `bezel` installs `bezel-omp`, which runs upstream `omp` from `PATH` or `$OMP_BIN` with Bezel's omp config overlay, so a one-line JSON skill reply is not cut. `bezel-pinned` points that same wrap at a fetched release binary. `omapi` is a symlink to `bezel-omp` for one release. |
 
 Bend2 is a later engine. It is not in this tree. The Jev router is still JavaScript. A Rust rewrite is a later phase.
 
@@ -94,14 +94,16 @@ The product name is Bezel. The repository is [VirtualMachinist/bezel](https://gi
 
 | Package | What it is |
 | --- | --- |
-| **`bezel`** | Installs `bezel-omp`, which runs host `omp` or `$OMP_BIN`. Exits 127 if neither exists. Also installs `omapi` as a symlink to `bezel-omp` for one release. |
+| **`bezel`** | Installs `bezel-omp`, which runs host `omp` or `$OMP_BIN`. Exits 127 if neither exists. Also installs `omapi` as a symlink to `bezel-omp` for one release, and the omp overlay (see below). |
 | **`bezel-pinned`** | Same wrap, pointed at a fetched [oh-my-pi v18.2.6](https://github.com/can1357/oh-my-pi/releases/tag/v18.2.6) binary. |
 | **`jev-router`** | Node router. Asks Typesafe for a Choice and prints a JSON verdict. Loop-stop (`continue` / `stop` / `escalate`), `jev-router --check` for a shadow diff check, shadow permission catalogs, and a small tool catalog (`--catalog`, `--schema NAME`). |
 | **`cursor-agent-jev`** | Runs `jev-router`, then execs `cursor-agent` (`cursor-agent` must already be on `PATH`). Shadow never blocks. Active honors continue and `gate: auto` only. `--catalog` and `--schema` print and do not exec. |
 | **`grok-build-jev`** | Grok Build PreToolUse adapter. Calls `jev-router` and prints `defer` or `deny`. Does not install a host hook. |
-| **`nushell`** | Interpreter for the Lapis, Facet, and Geode skill bodies. The version is the nixpkgs pin in `flake.lock`. |
+| **`nushell`** | Interpreter for the Lapis, Facet, Geode, and Phantom skill bodies. The version is the nixpkgs pin in `flake.lock`. |
 
 `packages.default` is `bezel`.
+
+**The omp overlay.** `bezel` and `bezel-pinned` install `share/bezel/omp-overlay.yml`, an omp config overlay that sets `tools.outputMaxColumns: 8192` and nothing else. By default omp cuts each tool-output line at 768 bytes, so a skill's one-line JSON reply arrives cut off. `bezel-omp` passes `--config=<that file>` ahead of your own arguments. A `--config` you pass yourself comes later and wins. `BEZEL_OMP_OVERLAY=0` passes no overlay. `scripts/check-omp-overlay.sh` checks all three cases against a fake `omp`.
 
 ## Names
 
@@ -112,12 +114,13 @@ The flake input and the primary package attribute are `bezel`. `packages.default
 | Product | Bezel |
 | Flake input / package | `bezel`, `bezel-pinned` |
 | omp wrap binary | `bezel-omp` |
+| omp overlay | `share/bezel/omp-overlay.yml` in `bezel` and `bezel-pinned`. `BEZEL_OMP_OVERLAY=0` turns it off. |
 | One-release symlink | `omapi` → `bezel-omp` |
 | Same package attrs | `.#omapi` is `bezel`. `.#omapi-pinned` is `bezel-pinned`. |
 | Jev commands | `jev-router`, `cursor-agent-jev`, `grok-build-jev` |
 | Home Manager | `programs.bezel`. `programs.omapi` is deprecated and renames to `programs.bezel`. |
 | Skills paths | `~/.agents/skills`, `~/.claude/skills`, `~/.grok/skills`, `~/.cursor/skills` |
-| Env | `BEZEL_*`. Legacy `OMAPI_*` is still read. The wrap sets both `BEZEL_OVERLAY` and `OMAPI_OVERLAY`. |
+| Env | `BEZEL_*`. Legacy `OMAPI_*` is still read. The wrap sets both `BEZEL_OVERLAY` and `OMAPI_OVERLAY`. `BEZEL_OMP_OVERLAY` has no `OMAPI_` alias. |
 
 Gate version strings stay `omapi-loop-stop-policy@1`, `omapi-check-policy@1`, and `omapi-route-workflow-policy@1`. Those ids are the policy contract. The typed-call host profile id stays `omapi-jev-router`. Changing either would change verdicts, not the product name. `omp-pin` and `omp-runtime` stay those attribute names.
 
@@ -188,11 +191,20 @@ How to run: [docs/GROK-BUILD.md](docs/GROK-BUILD.md).
 
 Skills are a flake input, and that input is the only skills tree Bezel installs. This repo ships them in `.agents/skills/` (`inputs.skills`). `scripts/sync-skills` writes regular-file copies to `.claude/skills/`, `.grok/skills/`, and `.cursor/skills/`. There is no repo-root `skills/` tree, no `.omp/skills/`, and no `.codex/skills/`. When you have a skills repo, change `inputs.skills.url` and the lock.
 
-The tree includes `bootstrap`, the shadow `check` skill (`jev-router --check`), and `laws`. It also includes shared read-only skills for Lapis, Facet, and Geode.
+The tree includes `bootstrap`, the shadow `check` skill (`jev-router --check`), and `laws`. It also includes the skills for Lapis, Facet, Geode, and Phantom:
+
+| Skill | What it answers | How it runs |
+| --- | --- | --- |
+| `lapis` | Vault search and read, read-only | `nu lapis.nu`, over `lapis --json` |
+| `facet` | Request history, read-only | `nu facet.nu`, over `facet … --json` |
+| `geode` | Custody status, metadata only | `nu geode.nu`, over `geode --output json` |
+| `phantom` | Code graph: where a name is defined, callers, impact, call paths, and which files change together | `nu phantom.nu`, or a `phantomq` wrapper if you have one, over `phantom-fractal` on `PATH` or `$PHANTOM_FRACTAL_BIN` |
+
+`phantom` is Phantom's own skill, a byte copy of Phantom `main` that is never edited here. It keeps Phantom's envelope, not the shared one below, and runs `index` only when a person asked. [`.agents/skills/README.md`](.agents/skills/README.md) records the commit it was copied from.
 
 ### Agent use: skills + CLI first, MCP still shipped
 
-The default way for an agent to use Lapis, Facet, or Geode is the bundled skill. In this repo that directory is `.agents/skills/<name>/`. After install, the same directory is at `~/.agents/skills/<name>/`, `~/.claude/skills/<name>/`, `~/.grok/skills/<name>/`, and `~/.cursor/skills/<name>/`. A short `SKILL.md` is what the harness reads to decide when to use it, plus a Nushell body (`nu <name>.nu`) that calls the CLI with JSON output. Every command prints the same envelope: `{ ok, command, exit, data, error }`.
+The default way for an agent to use Lapis, Facet, Geode, or Phantom is the bundled skill. In this repo that directory is `.agents/skills/<name>/`. After install, the same directory is at `~/.agents/skills/<name>/`, `~/.claude/skills/<name>/`, `~/.grok/skills/<name>/`, and `~/.cursor/skills/<name>/`. A short `SKILL.md` is what the harness reads to decide when to use it, plus a Nushell body (`nu <name>.nu`) that calls the CLI with JSON output. Every Lapis, Facet, and Geode command prints the same envelope: `{ ok, command, exit, data, error }`. Phantom's prints `{ ok, command, data, meta, exit }`, or on failure `{ ok, command, error, kind, stderr, exit }`.
 
 The MCP server for each tool (`lapis mcp`, `facet mcp`, `geode mcp`) stays supported and works the same as that tool ships it. Bezel does not disable MCP.
 
@@ -236,7 +248,8 @@ If a later release drops a platform build, `packages/omp-pin.nix` **throws** for
 - Jev defaults to shadow. `jev-router --check` is the shadow diff check. Empty findings are not approval. Loop-stop is shadow-first. Active `stop` and `escalate` do not exec.
 - The tool catalog is a small always-on index of the existing policy ids. Full schema is `jev-router --schema NAME` and is not an allow. Permission catalogs stay shadow.
 - `grok-build-jev` adapts those controls for Grok Build. Default modes stay shadow. The harness does not install a host hook.
-- Skills ship as `.agents/skills`, the flake's only skills tree. Lapis, Facet, and Geode are read-only skills there: skill plus CLI is the default, and MCP remains supported. Nushell is pinned by the nixpkgs lock.
+- Skills ship as `.agents/skills`, the flake's only skills tree. Lapis, Facet, and Geode are read-only skills there, and Phantom's code-graph skill is a byte copy of Phantom `main`: skill plus CLI is the default, and MCP remains supported. Nushell is pinned by the nixpkgs lock.
+- `bezel-omp` passes an omp config overlay that widens tool-output lines to 8192 bytes. `BEZEL_OMP_OVERLAY=0` turns it off.
 - Nix packaging stays. The router stays JavaScript.
 
 ## Contributing

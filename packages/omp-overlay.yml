@@ -1,0 +1,7 @@
+# The omp config overlay that bezel-omp loads as --config=<this file>.
+# It holds one setting and nothing else. omp cuts each tool-output line at
+# 768 bytes by default, so a one-line JSON skill reply arrives cut off with a
+# truncation footer. 8192 lets those replies through whole. Set
+# BEZEL_OMP_OVERLAY=0 to run bezel-omp with no overlay.
+tools:
+  outputMaxColumns: 8192

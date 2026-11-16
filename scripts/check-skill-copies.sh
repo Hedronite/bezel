@@ -40,3 +40,13 @@ fi
 for dest in "${copies[@]}"; do
   skill_sync_root "$canonical" "$dest" check
 done
+
+# Phantom's skill is a byte copy of Phantom main. Both files ship in the
+# canonical tree and in every harness copy, as regular files.
+for tree in "$canonical" "${copies[@]}"; do
+  for f in phantom/SKILL.md phantom/phantom.nu; do
+    if [[ -L $tree/$f || ! -f $tree/$f ]]; then
+      skill_fail "missing or linked $tree/$f"
+    fi
+  done
+done

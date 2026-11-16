@@ -200,7 +200,7 @@ The tree includes `bootstrap`, the shadow `check` skill (`jev-router --check`), 
 | `geode` | Custody status, metadata only | `nu geode.nu`, over `geode --output json` |
 | `phantom` | Code graph: where a name is defined, callers, impact, call paths, and which files change together | `nu phantom.nu`, or a `phantomq` wrapper if you have one, over `phantom-fractal` on `PATH` or `$PHANTOM_FRACTAL_BIN` |
 
-`phantom` is Phantom's own skill, a byte copy of Phantom `main` that is never edited here. It keeps Phantom's envelope, not the shared one below, and runs `index` only when a person asked. [`.agents/skills/README.md`](.agents/skills/README.md) records the commit it was copied from.
+`phantom` is Phantom's own skill, a byte copy of Phantom `main` that is never edited here. It keeps Phantom's envelope, not the shared one below. An agent may run its `index` whenever the index is missing or stale; it writes only to Phantom's own data directory, never to the repository. [`.agents/skills/README.md`](.agents/skills/README.md) records the commit it was copied from.
 
 ### Agent use: skills + CLI first, MCP still shipped
 

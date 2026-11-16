@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Phantom skill.** `.agents/skills/phantom` is Phantom's code-graph skill, a byte copy of Phantom `main`, and `scripts/sync-skills` copies it into the three harness directories. `scripts/check-skill-copies.sh` covers it. `scripts/check-skill-cli.sh` runs it against a fake `phantom-fractal` that records its argv, with no real binary: no read sends `index`, and SKILL.md keeps `index` for when a person asks. The skill keeps Phantom's own envelope.
+- **Phantom skill.** `.agents/skills/phantom` is Phantom's code-graph skill, a byte copy of Phantom `main`, and `scripts/sync-skills` copies it into the three harness directories. `scripts/check-skill-copies.sh` covers it. `scripts/check-skill-cli.sh` runs it against a fake `phantom-fractal` that records its argv, with no real binary: no read sends `index`, `index` takes one path and no flag, and SKILL.md says where `index` writes. An agent may run `index` whenever the index is missing or stale; it writes only to Phantom's own data directory, never to the repository. The skill keeps Phantom's own envelope.
 - **omp overlay.** `bezel` and `bezel-pinned` install `share/bezel/omp-overlay.yml`, which sets `tools.outputMaxColumns: 8192` and nothing else, so one-line JSON skill replies are not cut at omp's 768-byte default. `bezel-omp` passes it as `--config` ahead of the caller's arguments; a caller's own `--config` still wins. `BEZEL_OMP_OVERLAY=0` passes no overlay. `scripts/check-omp-overlay.sh` checks the default, the opt-out, and the argument order against a fake `omp`.
 - The README's Skills, Packages, and Names sections describe both.
 - `bezel-bridle`, the Jev router, the nixpkgs pin, and the flake inputs are unchanged. No tag.

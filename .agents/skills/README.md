@@ -23,7 +23,7 @@ Shipped skills:
 | `lapis` | Read-only vault search and read through `lapis --json` (`lapis.nu`) |
 | `facet` | Read-only request history through `facet … --json` (`facet.nu`). No bodies, blobs, or `request run` |
 | `geode` | Metadata-only custody status through `geode --output json` (`geode.nu`). Anything else is refused |
-| `phantom` | Code graph through `phantom-fractal --json` (`phantom.nu`): where, callers, impact, path, co-change. Copied byte for byte from Phantom `main` at `946f39d` |
+| `phantom` | Code graph through `phantom-fractal --json` (`phantom.nu`): where, callers, impact, path, co-change. Copied byte for byte from Phantom `main` at `8676aef` |
 
 `lapis`, `facet`, and `geode` are the default agent interface for those tools.
 Each directory is a short `SKILL.md` plus one Nushell script. Every command
@@ -35,8 +35,8 @@ servers for those tools stay supported; this tree does not turn them off.
 here; `scripts/check-skill-cli.sh` checks it against a fake `phantom-fractal`.
 It keeps Phantom's envelope, `{ ok, command, data, meta, exit: 0 }` or
 `{ ok: false, command, error, kind, stderr, exit }`, and exits with `exit`.
-It needs `phantom-fractal` on `PATH` or `$PHANTOM_FRACTAL_BIN`, and runs
-`index` only when a human asked.
+It needs `phantom-fractal` on `PATH` or `$PHANTOM_FRACTAL_BIN`. `index` may
+run at any time; it writes Phantom's own data directory, never the repository.
 
 `programs.bezel.enable` copies each skill directory, as regular files, into:
 

@@ -242,7 +242,7 @@ If a later release drops a platform build, `packages/omp-pin.nix` **throws** for
 ## Status
 
 - Overlay packages evaluate on all three declared systems.
-- CI on this repo **runs** the `x86_64-linux` job. The other three matrix rows skip (no matching hosted runner).
+- CI on this repo **runs** the `x86_64-linux` job. The other two matrix rows skip (no matching hosted runner).
 - `bezel-pinned` is opt-in (180–240 MB download).
 - Jev defaults to shadow. `jev-router --check` is the shadow diff check. Empty findings are not approval. Loop-stop is shadow-first. Active `stop` and `escalate` do not exec.
 - The tool catalog is a small always-on index of the existing policy ids. Full schema is `jev-router --schema NAME` and is not an allow. Permission catalogs stay shadow.

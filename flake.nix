@@ -3,9 +3,6 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    # nixpkgs 26.11 dropped Intel macOS. Keep x86_64-darwin declared (Jupi r1
-    # missed this slice) on the last Darwin-x64-supporting pin — not a skip-as-green.
-    nixpkgs-darwin-x64.url = "github:NixOS/nixpkgs/nixpkgs-26.05-darwin";
 
     # Sole skills input. Lapis, Facet, and Geode live in this tree with the
     # Bezel stub skills. Do not add a second repo-root skills/ product tree.
@@ -19,7 +16,6 @@
     {
       self,
       nixpkgs,
-      nixpkgs-darwin-x64,
       skills,
       ...
     }:
@@ -28,7 +24,6 @@
 
       systems = [
         "aarch64-darwin"
-        "x86_64-darwin"
         "aarch64-linux"
         "x86_64-linux"
       ];
@@ -48,11 +43,9 @@
 
       forAllSystems = f: lib.genAttrs systems (system: f system);
 
-      nixpkgsFor = system: if system == "x86_64-darwin" then nixpkgs-darwin-x64 else nixpkgs;
-
       pkgsFor =
         system:
-        import (nixpkgsFor system) {
+        import nixpkgs {
           inherit system;
           overlays = [ self.overlays.default ];
         };

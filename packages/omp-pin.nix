@@ -20,10 +20,6 @@ let
       asset = "omp-darwin-arm64";
       hash = "sha256-1JjaQNV34f+mgcqGMsLqQKn3IqCLiAQSAR033/7pUTo=";
     };
-    x86_64-darwin = {
-      asset = "omp-darwin-x64";
-      hash = "sha256-1ViAD6Mmq8aK48u7PlNjIuxkO9z93HHmqYiFfb4alKM=";
-    };
     aarch64-linux = {
       asset = "omp-linux-arm64";
       hash = "sha256-ByRcvgUMOZmrXOqbq/6E5+iBnS9NXkm+9HwKrLa5V+Q=";

@@ -227,14 +227,13 @@ These three scripts are read-only. Facet never requests history bodies, blobs, `
 
 ## Platforms
 
-Declared systems: `aarch64-darwin`, `x86_64-darwin`, `aarch64-linux`, `x86_64-linux`.
+Declared systems: `aarch64-darwin`, `aarch64-linux`, `x86_64-linux`. Intel macOS is not supported: nixpkgs 26.11 dropped it.
 
 | System | Pinned binary (oh-my-pi v18.2.6) | Availability |
 | --- | --- | --- |
 | `aarch64-darwin` | `omp-darwin-arm64` | Pin present. No hosted runner in this workflow. |
-| `x86_64-darwin` | `omp-darwin-x64` | Pin present. Evaluated against `nixpkgs-26.05-darwin` (nixpkgs 26.11 dropped Intel macOS). No hosted runner in this workflow. |
 | `aarch64-linux` | `omp-linux-arm64` | Pin present. No hosted runner in this workflow. |
-| `x86_64-linux` | `omp-linux-x64` | Pin present. GitHub Actions evaluates all four systems and builds overlay packages here. |
+| `x86_64-linux` | `omp-linux-x64` | Pin present. GitHub Actions evaluates all three systems and builds overlay packages here. |
 
 If a later release drops a platform build, `packages/omp-pin.nix` **throws** for that system. A skipped CI row is a skip with a reason, not a pretend build.
 
@@ -242,7 +241,7 @@ If a later release drops a platform build, `packages/omp-pin.nix` **throws** for
 
 ## Status
 
-- Overlay packages evaluate on all four declared systems.
+- Overlay packages evaluate on all three declared systems.
 - CI on this repo **runs** the `x86_64-linux` job. The other three matrix rows skip (no matching hosted runner).
 - `bezel-pinned` is opt-in (180–240 MB download).
 - Jev defaults to shadow. `jev-router --check` is the shadow diff check. Empty findings are not approval. Loop-stop is shadow-first. Active `stop` and `escalate` do not exec.

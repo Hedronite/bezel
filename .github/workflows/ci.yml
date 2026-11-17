@@ -28,11 +28,6 @@ jobs:
             skip: true
             skip_reason: "No aarch64-darwin runner configured. Pin exists (omp-darwin-arm64). Not a pretend green build."
             build_bezel_pin: false
-          - system: x86_64-darwin
-            os: ubuntu-latest
-            skip: true
-            skip_reason: "No x86_64-darwin runner configured. Pin exists (omp-darwin-x64). Not a pretend green build."
-            build_bezel_pin: false
 
     steps:
       - name: Honesty skip
@@ -77,10 +72,10 @@ jobs:
           fi
           echo "splash removed"
 
-      - name: Evaluate all four systems (no omp pin fetch)
+      - name: Evaluate all three systems (no omp pin fetch)
         if: ${{ !matrix.skip }}
         run: |
-          for sys in aarch64-darwin x86_64-darwin aarch64-linux x86_64-linux; do
+          for sys in aarch64-darwin aarch64-linux x86_64-linux; do
             echo "== eval packages.$sys =="
             test "$(nix eval --raw ".#packages.$sys.bezel.pname")" = bezel
             test "$(nix eval --raw ".#packages.$sys.bezel.meta.mainProgram")" = bezel-omp

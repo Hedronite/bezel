@@ -24,12 +24,28 @@ Shipped skills:
 | `facet` | Read-only request history through `facet … --json` (`facet.nu`). No bodies, blobs, or `request run` |
 | `geode` | Metadata-only custody status through `geode --output json` (`geode.nu`). Anything else is refused |
 | `phantom` | Code graph through `phantom-fractal --json` (`phantom.nu`): where, callers, impact, path, co-change. Copied byte for byte from Phantom `main` at `8676aef` |
+| `goal-pack` | Multi-role goal pack from one compact Nickel intent: hub, REVIEW, SPEC, CHECKLIST, RUBRIC, GOAL, schemas, briefs. Contracts judge the fence cap, standing rows, forbidden phrases, ownership, and step ids before any file is written |
 
 `lapis`, `facet`, and `geode` are the default agent interface for those tools.
 Each directory is a short `SKILL.md` plus one Nushell script. Every command
 prints the same JSON envelope: `{ ok, command, exit, data, error }`. The
 Nushell that runs them is the one pinned by this flake's nixpkgs lock. MCP
 servers for those tools stay supported; this tree does not turn them off.
+
+`goal-pack` is the Tier-2 skill: `SKILL.md`, `law.ncl`, and `materialize.nu`.
+You write a plain-data `intent.ncl`; `law.ncl` renders every pack file and
+holds the contracts; `materialize.nu` runs `nickel export`, checks identity,
+seat roles, and path safety, then writes bytes atomically. A pack composes
+`law.ncl & org overlay & intent`. Additive lists are per layer (`forbidden`
+from the law, `org_forbidden` from the overlay, `pack_forbidden` from the
+intent) and the law concatenates them; an upper layer binds
+`law.list_floor <its rules>` to its own field, so a later `| priority 10` or
+`| force` can add rules but never silently drop one (`LAYER_WEAKENED`). Caps
+and floors follow the same rule: `fence_max` may tighten only
+(`FENCE_CAP_WEAKENED`), standing rows S1-S4 and forbidden phrases may only
+grow. Nickel resolves through `--nickel`, `$NICKEL_BIN`, or `PATH`; both
+interpreters come from the flake's nixpkgs pin. `scripts/check-skill-cli.sh`
+exercises the skill under `nix flake check`.
 
 `phantom` is Phantom's own skill, copied from Phantom `main` and never edited
 here; `scripts/check-skill-cli.sh` checks it against a fake `phantom-fractal`.

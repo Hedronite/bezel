@@ -28,4 +28,4 @@ The harness loads this skill from the Bezel pack. Bezel does not replace the har
 - Link `@typesafe-ai/sdk` from Rust
 - Publish the crate `bezel`
 - Flip the live PreToolUse matcher
-- Run `cargo` on castle
+- Run `cargo` on the local host

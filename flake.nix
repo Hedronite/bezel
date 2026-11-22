@@ -87,8 +87,10 @@
             grok-build-jev
             omp-runtime
             omp-pin
-            # Skill interpreter. Pinned by the nixpkgs lock, not a second input.
+            # Skill interpreters (Nushell for skill bodies, Nickel for pack
+            # law). Pinned by the nixpkgs lock, not a second input.
             nushell
+            nickel
             ;
           default = pkgs.bezel;
         }
@@ -132,6 +134,72 @@
           jev-router = self.packages.${system}.jev-router;
           cursor-agent-jev = self.packages.${system}.cursor-agent-jev;
           grok-build-jev = self.packages.${system}.grok-build-jev;
+
+          # Home Manager module evaluation. No other check evaluates the
+          # module, so an option or activation regression would pass CI.
+          # Force the three shapes that matter: Antigravity off (the
+          # default), on, and a package set without nickel.
+          bezel-hm-eval =
+            let
+              bezelModule = import ./modules/home-manager.nix { inherit skills; };
+              hmLib = lib // {
+                hm.dag.entryAfter = _after: script: script;
+              };
+              homeStub =
+                { lib, ... }:
+                {
+                  options.home = {
+                    packages = lib.mkOption {
+                      type = lib.types.listOf lib.types.package;
+                      default = [ ];
+                    };
+                    activation = lib.mkOption {
+                      type = lib.types.attrsOf lib.types.lines;
+                      default = { };
+                    };
+                    homeDirectory = lib.mkOption {
+                      type = lib.types.str;
+                      default = "/tmp/bezel-hm-eval";
+                    };
+                  };
+                };
+              evalWith =
+                pkgsArg: extra:
+                lib.evalModules {
+                  modules = [
+                    bezelModule
+                    homeStub
+                    {
+                      config.programs.bezel.enable = true;
+                      config.programs.bezel.package = pkgsArg.hello;
+                    }
+                    extra
+                  ];
+                  specialArgs = {
+                    lib = hmLib;
+                    pkgs = pkgsArg;
+                  };
+                };
+              on = evalWith pkgs { config.programs.bezel.antigravity.enable = true; };
+              off = evalWith pkgs { };
+              bare = evalWith (removeAttrs pkgs [ "nickel" ]) {
+                config.programs.bezel.antigravity.enable = true;
+              };
+              hasNickel = list: lib.any (p: lib.getName p == "nickel") list;
+              ok =
+                (on.config.home.activation ? bezelAgySkills)
+                && (on.config.home.activation ? bezelUserSkills)
+                && !(off.config.home.activation ? bezelAgySkills)
+                && off.options.programs.bezel.antigravity.enable.default == false
+                && hasNickel on.config.home.packages
+                && !(hasNickel bare.config.home.packages)
+                && lib.hasInfix "install-agy-skills-config.sh" on.config.home.activation.bezelAgySkills
+                && lib.hasInfix "python3" on.config.home.activation.bezelAgySkills;
+            in
+            if ok then
+              pkgs.runCommand "bezel-hm-eval" { } "echo ok > $out"
+            else
+              throw "bezel-hm-eval: Home Manager module evaluation is off contract";
 
           bezel-wrap-contract = pkgs.runCommand "bezel-wrap-contract" { } ''
             set -eu
@@ -680,6 +748,7 @@
           skills-cli = pkgs.runCommand "skills-cli" {
             nativeBuildInputs = [
               pkgs.nushell
+              pkgs.nickel
               pkgs.python3
               pkgs.bash
             ];

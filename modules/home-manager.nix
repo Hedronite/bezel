@@ -8,8 +8,7 @@
 
 # Skills flake input is the sole SoT. This module copies that tree into each
 # harness's user directory as regular files. Do not vendor a second skills/
-# tree in Bezel. Nushell is on PATH so the Lapis, Facet, and Geode skill
-# bodies can run.
+# tree in Bezel. Nushell and Nickel are on PATH so the skill bodies can run.
 # `programs.omapi` is deprecated. It renames to `programs.bezel`.
 
 {
@@ -33,9 +32,10 @@
         lib.optional (pkgs ? jev-router) pkgs.jev-router
         ++ lib.optional (pkgs ? cursor-agent-jev) pkgs.cursor-agent-jev
         ++ lib.optional (pkgs ? grok-build-jev) pkgs.grok-build-jev
-        ++ lib.optional (pkgs ? nushell) pkgs.nushell;
-      defaultText = lib.literalExpression "[ pkgs.jev-router pkgs.cursor-agent-jev pkgs.grok-build-jev pkgs.nushell ]";
-      description = "Additional Bezel packages on PATH (jev-router, cursor-agent-jev, grok-build-jev, and the pinned Nushell used by skills).";
+        ++ lib.optional (pkgs ? nushell) pkgs.nushell
+        ++ lib.optional (pkgs ? nickel) pkgs.nickel;
+      defaultText = lib.literalExpression "[ pkgs.jev-router pkgs.cursor-agent-jev pkgs.grok-build-jev pkgs.nushell pkgs.nickel ]";
+      description = "Additional Bezel packages on PATH (jev-router, cursor-agent-jev, grok-build-jev, and the pinned Nushell and Nickel used by skills).";
     };
 
     skillsSource = lib.mkOption {

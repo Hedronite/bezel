@@ -964,4 +964,85 @@ gp_check defense-out-of-product "$work/out" 2 PATH_UNSAFE
 [[ ! -e "$gp/vault-defense/foundry/other/README.md" ]] \
   || fail "goal-pack case 'defense-out-of-product' wrote outside the product"
 
+
+# ---------- private-name hash guard (opt-in, hashed) ----------
+# Synthetic salt and terms only: the repository stores no real private names.
+guard=$script_dir/check-private-hashes.sh
+[[ -x $guard ]] || fail "missing $guard"
+priv=$work/private
+mkdir -p "$priv/clean"
+printf 'ordinary text here\n' >"$priv/clean/note.md"
+printf 'QuuxBox\n  plughhost  \n# comment\n\n' | "$guard" --hash synthetic-salt >"$priv/hashes.json"
+python3 - "$priv/hashes.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+if doc.get("salt") != "synthetic-salt":
+    raise SystemExit(f"bad salt: {doc}")
+if len(doc.get("hashes", [])) != 2:
+    raise SystemExit(f"bad hashes: {doc}")
+if sorted(doc.get("lengths", [])) != [7, 9]:
+    raise SystemExit(f"bad lengths: {doc}")
+PY
+
+unset BEZEL_PRIVATE_HASHES || true
+status=0
+"$guard" --hash-file "$priv/hashes.json" "$priv/clean" >"$priv/out" 2>"$priv/err" || status=$?
+[[ $status -eq 0 ]] || fail "private guard failed a clean tree ($status)"
+[[ ! -s $priv/out && ! -s $priv/err ]] || fail "private guard printed on a clean tree"
+
+mkdir -p "$priv/token"
+printf 'we ship quuxbox now\n' >"$priv/token/note.md"
+status=0
+"$guard" --hash-file "$priv/hashes.json" "$priv/token" >"$priv/out" 2>"$priv/err" || status=$?
+[[ $status -eq 1 ]] || fail "private guard missed a token hit ($status)"
+grep -q 'sha256:' "$priv/out" || fail "private guard hit has no hash prefix"
+grep -q 'line 1' "$priv/out" || fail "private guard hit has no line number"
+if grep -qi 'quuxbox' "$priv/out" "$priv/err"; then
+  fail "private guard echoed the matched token"
+fi
+
+mkdir -p "$priv/substring"
+printf 'prequuxboxpost\n' >"$priv/substring/note.md"
+status=0
+"$guard" --hash-file "$priv/hashes.json" "$priv/substring" >"$priv/out" 2>"$priv/err" || status=$?
+[[ $status -eq 1 ]] || fail "private guard missed an embedded substring ($status)"
+grep -q 'line 1' "$priv/out" || fail "substring hit has no line number"
+if grep -qi 'quuxbox' "$priv/out" "$priv/err"; then
+  fail "private guard echoed the embedded substring"
+fi
+
+mkdir -p "$priv/pathroot/quuxbox-dir"
+printf 'ordinary text\n' >"$priv/pathroot/quuxbox-dir/note.md"
+status=0
+"$guard" --hash-file "$priv/hashes.json" "$priv/pathroot" >"$priv/out" 2>"$priv/err" || status=$?
+[[ $status -eq 1 ]] || fail "private guard missed a path hit ($status)"
+grep -q 'path' "$priv/out" || fail "path hit does not say path"
+grep -q '\[REDACTED\]' "$priv/out" || fail "path hit is not masked"
+if grep -qi 'quuxbox' "$priv/out" "$priv/err"; then
+  fail "private guard echoed a path term"
+fi
+if grep -qF "$priv" "$priv/out" "$priv/err"; then
+  fail "private guard printed an absolute path"
+fi
+
+status=0
+"$guard" --hash-file "$priv/missing.json" "$priv/clean" >"$priv/out" 2>"$priv/err" || status=$?
+[[ $status -eq 2 ]] || fail "private guard exit on a missing hash file was $status"
+
+printf '{oops\n' >"$priv/bad.json"
+status=0
+"$guard" --hash-file "$priv/bad.json" "$priv/clean" >"$priv/out" 2>"$priv/err" || status=$?
+[[ $status -eq 2 ]] || fail "private guard exit on malformed JSON was $status"
+if grep -q 'Traceback' "$priv/err"; then
+  fail "private guard printed a traceback"
+fi
+
+status=0
+env -u BEZEL_PRIVATE_HASHES "$guard" "$priv/clean" >"$priv/out" 2>"$priv/err" || status=$?
+[[ $status -eq 0 ]] || fail "private guard exit without a hash file was $status"
+
+status=0
+BEZEL_PRIVATE_HASHES="$priv/hashes.json" "$guard" "$priv/token" >"$priv/out" 2>"$priv/err" || status=$?
+[[ $status -eq 1 ]] || fail "private guard env hash file exit was $status"
+
 echo "check-skill-cli: ok"

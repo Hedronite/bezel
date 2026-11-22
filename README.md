@@ -231,6 +231,10 @@ nu .agents/skills/lapis/lapis.nu status
 
 These three scripts are read-only. Facet never requests history bodies, blobs, `diff --bodies`, or `request run`. Geode is metadata only and refuses every other command.
 
+### Private-name guard
+
+`scripts/check-private-hashes.sh` lets an adopter keep their own host, seat, and path names out of a repository without storing the names themselves. Generator mode reads terms on stdin (`printf '%s\n' name | scripts/check-private-hashes.sh --hash SALT`) and prints `{ "salt", "lengths", "hashes" }`. Scan mode takes that file with `--hash-file` or `$BEZEL_PRIVATE_HASHES` and checks lowercased identifier tokens, delimiter sub-tokens, short substrings, and relative path segments and substrings. A hit exits 1 and prints only a `sha256:` prefix, a line number or `path`, and a relative path with matching substrings replaced by `[REDACTED]`; the term and the line content are never printed. A configured but missing or malformed hash file exits 2; with no hash file the guard exits 0, so it is opt-in.
+
 ## Platforms
 
 Declared systems: `aarch64-darwin`, `aarch64-linux`, `x86_64-linux`. Intel macOS is not supported: nixpkgs 26.11 dropped it.

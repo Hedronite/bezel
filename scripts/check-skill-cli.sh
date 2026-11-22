@@ -28,6 +28,29 @@ do
   [[ -f "$skills/$f" ]] || fail "missing $skills/$f"
 done
 
+# goal-pack: public Tier-2 skill. One envelope, public text, no store paths.
+for f in goal-pack/SKILL.md goal-pack/law.ncl goal-pack/materialize.nu; do
+  [[ -f "$skills/$f" ]] || fail "missing $skills/$f"
+done
+grep -qF '{ ok, command, exit, data, error }' "$skills/goal-pack/SKILL.md" \
+  || fail "goal-pack SKILL.md does not document the shared envelope"
+grep -q 'nu materialize.nu' "$skills/goal-pack/SKILL.md" \
+  || fail "goal-pack SKILL.md does not call materialize.nu"
+grep -qF 'list_floor' "$skills/goal-pack/SKILL.md" \
+  || fail "goal-pack SKILL.md does not document the layer floor helper"
+if grep -nE '/(Users|home)/|localhost|@[A-Za-z0-9._-]+\.(com|dev|net)' \
+  "$skills/goal-pack/SKILL.md" "$skills/goal-pack/law.ncl" "$skills/goal-pack/materialize.nu"
+then
+  fail "goal-pack files contain a private-looking path, host, or address"
+fi
+if grep -nF '/nix/store' \
+  "$skills/goal-pack/SKILL.md" "$skills/goal-pack/law.ncl" "$skills/goal-pack/materialize.nu"
+then
+  fail "goal-pack files hardcode a store path; resolve nickel by flag, env, or PATH"
+fi
+nickel=${NICKEL:-nickel}
+command -v "$nickel" >/dev/null || fail "nickel is not on PATH"
+
 for skill in lapis facet geode; do
   grep -q '{ ok, command, exit, data, error }' "$skills/$skill/SKILL.md" \
     || fail "$skill SKILL.md does not document the shared envelope"
@@ -654,5 +677,267 @@ if "lapis:" not in err:
 if "/home/" in err or "/Users/" in err:
     raise SystemExit(err)
 PY
+
+
+# ---------- goal-pack: Tier-2 Nickel + Nushell skill ----------
+gp="$work/gp"
+mkdir -p "$gp"
+cp "$skills/goal-pack/law.ncl" "$gp/law.ncl"
+
+cat >"$gp/org-overlay.ncl" <<'NCL'
+let law = import "./law.ncl" in
+let rules = ["draft PRs", "private names in commit text"] in
+{
+  org_forbidden | law.list_floor rules = rules,
+  doc_owner = "pm",
+  build_rule = "build on the host the build board names; never on the cockpit host",
+  merge_rule = "writers never merge; merge after green CI and a clear at the exact head",
+}
+NCL
+
+cat >"$gp/intent.ncl" <<'NCL'
+{
+  product = "demo",
+  slug = "m1",
+  title = "export pipeline",
+  date = "2026-11-22",
+  roles = ["pm", "backend", "qa"],
+  review_body = "## Findings\n\n- F1: exports are built in three places.",
+  spec_body = "## Target\n\nOne export endpoint and one e2e matrix.",
+  pack_forbidden = ["placeholder text in shipped copy"],
+  steps = [
+    { id = "G0", title = "export endpoint", role = "backend", paths = ["src/api", "tests/api"],
+      pass = "api tests green", fail = "any api test red or skipped" },
+    { id = "G1", title = "e2e matrix", role = "qa", paths = ["tests/e2e"],
+      pass = "matrix green and evidence filed", fail = "any case red or skipped",
+      depends_on = ["G0"] },
+  ],
+}
+NCL
+
+cat >"$gp/facts.json" <<'JSON'
+{"occupancy":"live","seats":[{"role":"pm"},{"role":"backend"},{"role":"qa"}]}
+JSON
+cat >"$gp/facts-missing.json" <<'JSON'
+{"occupancy":"live","seats":[{"role":"pm"},{"role":"backend"}]}
+JSON
+
+pack_of() { printf '((import "./law.ncl") & (import "./org-overlay.ncl") & (import "./intent.ncl") & (import "./%s")).out\n' "$1"; }
+
+cat >"$gp/pack.ncl" <<'NCL'
+((import "./law.ncl") & (import "./org-overlay.ncl") & (import "./intent.ncl")).out
+NCL
+printf '{ pack_forbidden | priority 10 = ["pack rule"] }\n' >"$gp/v-pack-priority.ncl"
+pack_of v-pack-priority.ncl >"$gp/pack-priority.ncl"
+printf '{ org_forbidden | priority 10 = [] }\n' >"$gp/v-drop-org.ncl"
+pack_of v-drop-org.ncl >"$gp/pack-drop-org.ncl"
+printf '{ fence_max = 5000 }\n' >"$gp/v-weaken.ncl"
+pack_of v-weaken.ncl >"$gp/pack-weaken.ncl"
+printf '{ fence_max | priority 10 = 5000 }\n' >"$gp/v-weaken-force.ncl"
+pack_of v-weaken-force.ncl >"$gp/pack-weaken-force.ncl"
+printf '{ fence_max | priority 10 = 3000 }\n' >"$gp/v-tighten.ncl"
+pack_of v-tighten.ncl >"$gp/pack-tighten.ncl"
+printf '{ forbidden = ["overlay only"] }\n' >"$gp/v-forbidden-a.ncl"
+printf '{ forbidden = ["intent only"] }\n' >"$gp/v-forbidden-b.ncl"
+printf '((import "./law.ncl") & (import "./org-overlay.ncl") & (import "./intent.ncl") & (import "./v-forbidden-a.ncl") & (import "./v-forbidden-b.ncl")).out\n' \
+  >"$gp/pack-merge.ncl"
+cat >"$gp/multi-intent.ncl" <<'NCL'
+{
+  product = "demo",
+  slug = "m2",
+  title = "multi-error",
+  date = "2026-11-22",
+  roles = ["backend", "qa"],
+  review_body = "r",
+  spec_body = "s",
+  steps = [
+    { id = "G0", title = "a", role = "backend", paths = ["src/x"], pass = "p", fail = "f" },
+    { id = "G0", title = "b", role = "frontend", paths = ["src/y"], pass = "p", fail = "f" },
+    { id = "G1", title = "c", role = "qa", paths = ["src/x/sub"], pass = "p", fail = "f" },
+  ],
+}
+NCL
+printf '((import "./law.ncl") & (import "./multi-intent.ncl")).out\n' >"$gp/pack-multi.ncl"
+cat >"$gp/raw-empty-slug.ncl" <<'NCL'
+{
+  interface = "proto-ncl-pack/v0",
+  product = "demo",
+  slug = "",
+  fence = { chars = 1, cap = 3800 },
+  roles = ["pm"],
+  owners = [],
+  files = [{ path = "foundry/demo/GOAL-x.md", content = "x", create_only = false }],
+}
+NCL
+
+gp_check() {
+  local name=$1 out=$2 want_exit=$3 want_code=${4:-}
+  if ! python3 - "$out" "$want_exit" "$want_code" <<'PY'
+import json, sys
+path, want_exit, want_code = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+doc = json.load(open(path, encoding="utf-8"))
+data = doc["data"] or {}
+if doc["exit"] != want_exit:
+    raise SystemExit(f"envelope exit {doc['exit']} != {want_exit}: {doc}")
+codes = [v["code"] for v in (data.get("violations") or [])]
+if want_code and want_code not in codes:
+    raise SystemExit(f"missing {want_code} in {codes}: {doc}")
+if want_exit == 0 and data.get("passed") is not True:
+    raise SystemExit(f"exit 0 but passed is not true: {doc}")
+if want_exit != 0:
+    if data.get("passed") is not False:
+        raise SystemExit(f"refusal without passed false: {doc}")
+    if data.get("files_written"):
+        raise SystemExit(f"refusal wrote files: {doc}")
+PY
+  then
+    fail "goal-pack case '$name' failed"
+  fi
+}
+
+gp_codes() {
+  local name=$1 out=$2 want=$3
+  if ! python3 - "$out" "$want" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+want = sys.argv[2].split()
+codes = sorted({v["code"] for v in ((doc["data"] or {}).get("violations") or [])})
+if codes != sorted(want):
+    raise SystemExit(f"codes {codes} != {sorted(want)}: {doc}")
+PY
+  then
+    fail "goal-pack case '$name' failed"
+  fi
+}
+
+gp_forbidden() {
+  local name=$1 file=$2
+  shift 2
+  if ! python3 - "$file" "$@" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+rules = doc["forbidden"]
+missing = [r for r in sys.argv[2:] if r not in rules]
+if missing:
+    raise SystemExit(f"forbidden lost {missing}: {rules}")
+PY
+  then
+    fail "goal-pack case '$name' failed"
+  fi
+}
+
+unset NICKEL_BIN || true
+rm -rf "$gp/vault"
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack.ncl" --vault "$gp/vault" --facts "$gp/facts.json" --nickel "$nickel"
+gp_check positive "$work/out" 0
+python3 - "$work/out" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))["data"]
+if len(data.get("files_written") or []) != 13:
+    raise SystemExit(f"positive wrote {len(data.get('files_written'))} files, want 13")
+if not data.get("fence", {}).get("chars"):
+    raise SystemExit("positive reports no fence length")
+PY
+gp_forbidden positive-rules "$gp/vault/foundry/demo/schema/m1/goal.instance.json" \
+  "pushing main" "draft PRs" "private names in commit text" "placeholder text in shipped copy"
+[[ -f "$gp/vault/foundry/demo/GOAL-m1.md" ]] || fail "goal-pack did not write GOAL-m1.md"
+
+export NICKEL_BIN="$nickel"
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack-tighten.ncl" --vault "$gp/vault-tight" --facts "$gp/facts.json"
+gp_check tighten "$work/out" 0
+
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack-weaken.ncl" --vault "$gp/vault-weaken" --facts "$gp/facts.json"
+gp_check weaken-plain "$work/out" 2 FENCE_CAP_WEAKENED
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack-weaken-force.ncl" --vault "$gp/vault-weaken" --facts "$gp/facts.json"
+gp_check weaken-force "$work/out" 2 FENCE_CAP_WEAKENED
+
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack-priority.ncl" --vault "$gp/vault-priority" --facts "$gp/facts.json"
+gp_check c1-pack-priority "$work/out" 0
+gp_forbidden c1-org-survives "$gp/vault-priority/foundry/demo/schema/m1/goal.instance.json" \
+  "draft PRs" "private names in commit text" "pack rule"
+
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack-drop-org.ncl" --vault "$gp/vault-drop" --facts "$gp/facts.json"
+gp_check c1-drop-org "$work/out" 2 LAYER_WEAKENED
+python3 - "$work/out" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+detail = doc["data"]["violations"][0]["detail"]
+if "private names in commit text" not in detail:
+    raise SystemExit(f"LAYER_WEAKENED detail hides the dropped rule: {detail}")
+PY
+
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack-merge.ncl" --vault "$gp/vault-merge" --facts "$gp/facts.json"
+gp_check c2-uncoded "$work/out" 2 NICKEL_ERROR
+python3 - "$work/out" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+detail = doc["data"]["violations"][0]["detail"]
+for needle in ("cannot merge unequal arrays", "auto-generated"):
+    if needle not in detail:
+        raise SystemExit(f"NICKEL_ERROR detail lost {needle!r}: {detail}")
+PY
+
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack-multi.ncl" --vault "$gp/vault-multi" --facts "$gp/facts.json"
+gp_check multi-errors "$work/out" 2 STEP_ID_DUP
+gp_codes multi-errors "$work/out" "OWNER_OVERLAP OWNER_ROLE_UNDECLARED STEP_ID_DUP"
+
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack.ncl" --vault "$gp/vault-seat" --facts "$gp/facts-missing.json"
+gp_check g-owner-unknown "$work/out" 2 G_OWNER_UNKNOWN
+[[ -z "$(ls -A "$gp/vault-seat" 2>/dev/null)" ]] || fail "goal-pack case 'g-owner-unknown' wrote files"
+
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack.ncl" --vault "$gp/vault" --facts "$gp/facts.json"
+gp_check stage-collision "$work/out" 2 STAGE_COLLISION
+printf '\n<!-- sentinel-status-preserved -->\n' >>"$gp/vault/foundry/demo/STATUS.md"
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack.ncl" --vault "$gp/vault" --facts "$gp/facts.json" --force
+gp_check force-create-only "$work/out" 0
+grep -q 'sentinel-status-preserved' "$gp/vault/foundry/demo/STATUS.md" \
+  || fail "goal-pack case 'force-create-only' overwrote STATUS.md"
+python3 - "$work/out" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))["data"]
+if "foundry/demo/STATUS.md" not in data.get("files_skipped", []):
+    raise SystemExit(f"STATUS.md not reported skipped: {data.get('files_skipped')}")
+PY
+
+mkdir -p "$gp/vault-defense/foundry/demo/schema/other-pack"
+printf '{"keep":true}\n' >"$gp/vault-defense/foundry/demo/schema/other-pack/keep.json"
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/raw-empty-slug.ncl" --vault "$gp/vault-defense" --force
+gp_check defense-empty-slug "$work/out" 2 IDENT_INVALID
+[[ -f "$gp/vault-defense/foundry/demo/schema/other-pack/keep.json" ]] \
+  || fail "goal-pack case 'defense-empty-slug' removed a sibling schema"
+[[ ! -e "$gp/vault-defense/foundry/demo/GOAL-x.md" ]] \
+  || fail "goal-pack case 'defense-empty-slug' wrote past the identity guard"
+
+cat >"$gp/raw-empty-segment.ncl" <<'NCL'
+{
+  interface = "proto-ncl-pack/v0",
+  product = "demo",
+  slug = "m1",
+  fence = { chars = 1, cap = 3800 },
+  roles = ["pm"],
+  owners = [],
+  files = [{ path = "foundry/demo/schema//bad.json", content = "{}", create_only = false }],
+}
+NCL
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/raw-empty-segment.ncl" --vault "$gp/vault-defense" --force
+gp_check defense-empty-segment "$work/out" 2 NICKEL_ERROR
+[[ ! -e "$gp/vault-defense/foundry/demo/schema/bad.json" ]] \
+  || fail "goal-pack case 'defense-empty-segment' wrote an unsafe path"
+
+cat >"$gp/raw-out-of-product.ncl" <<'NCL'
+{
+  interface = "proto-ncl-pack/v0",
+  product = "demo",
+  slug = "m1",
+  fence = { chars = 1, cap = 3800 },
+  roles = ["pm"],
+  owners = [],
+  files = [{ path = "foundry/other/README.md", content = "x", create_only = false }],
+}
+NCL
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/raw-out-of-product.ncl" --vault "$gp/vault-defense" --force
+gp_check defense-out-of-product "$work/out" 2 NICKEL_ERROR
+[[ ! -e "$gp/vault-defense/foundry/other/README.md" ]] \
+  || fail "goal-pack case 'defense-out-of-product' wrote outside the product"
 
 echo "check-skill-cli: ok"

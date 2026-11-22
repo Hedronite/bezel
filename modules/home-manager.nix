@@ -50,6 +50,13 @@
         in-repo skills/ copy.
       '';
     };
+
+    antigravity.enable = lib.mkEnableOption "Antigravity (agy) skills registration";
+    # When on, activation registers ~/.agents/skills in
+    # ~/.gemini/config/skills.json. That points agy at the regular-file tree
+    # this module already maintains: no fifth copy and no symlinks. The helper
+    # preserves unrelated entries, leaves a registered file byte- and
+    # mtime-identical, and refuses to follow a symlink or rewrite bad JSON.
   };
 
   config = lib.mkIf config.programs.bezel.enable {
@@ -59,14 +66,29 @@
     # including their mode. Different bytes or a symlinked managed file fail
     # this activation: it does not pass --force, and the existing file is left
     # unchanged. lib.hm is Home Manager's module library.
-    home.activation.bezelUserSkills =
+    #
+    # Antigravity reads ~/.gemini/config/skills.json. When enabled, register
+    # the regular-file ~/.agents/skills tree this module already writes; never
+    # a fifth copy and never a symlink. The helper is drift-safe and fails
+    # closed on symlinks or malformed JSON.
+    home.activation =
       let
         dag = lib.hm.dag or (throw "programs.bezel needs Home Manager (lib.hm.dag)");
       in
-      dag.entryAfter [ "writeBoundary" ] ''
-        ${pkgs.bash}/bin/bash ${../scripts}/install-user-skills.sh ${
-          lib.escapeShellArg (toString config.programs.bezel.skillsSource)
-        } ${lib.escapeShellArg config.home.homeDirectory}
-      '';
+      {
+        bezelUserSkills = dag.entryAfter [ "writeBoundary" ] ''
+          ${pkgs.bash}/bin/bash ${../scripts}/install-user-skills.sh ${
+            lib.escapeShellArg (toString config.programs.bezel.skillsSource)
+          } ${lib.escapeShellArg config.home.homeDirectory}
+        '';
+      }
+      // lib.optionalAttrs config.programs.bezel.antigravity.enable {
+        bezelAgySkills = dag.entryAfter [ "writeBoundary" "bezelUserSkills" ] ''
+          PYTHON=${pkgs.python3}/bin/python3 \
+            ${pkgs.bash}/bin/bash ${../scripts}/install-agy-skills-config.sh ${
+              lib.escapeShellArg config.home.homeDirectory
+            }
+        '';
+      };
   };
 }

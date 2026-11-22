@@ -222,6 +222,8 @@ Use the MCP server when your harness defers or filters MCP tool schemas (loading
 
 `programs.bezel.enable` puts the pinned Nushell on `PATH` and copies each skill directory into the four user directories above. The copies are regular files. A second activation leaves a file alone when its bytes already match, and it keeps that file's mode. If a managed file already exists with different bytes, or the path is a symlink, the activation prints a drift report and writes nothing, so a live `~/.agents/skills/lapis/lapis.nu` stays in place for `~/.local/bin/lapisq`. Repair with `scripts/install-user-skills.sh --force .agents/skills "$HOME"`, which replaces the bytes and keeps the mode the file already had. `--check` reports drift and writes nothing.
 
+`programs.bezel.antigravity.enable` (default `false`) registers `~/.agents/skills` in `~/.gemini/config/skills.json` on activation, so Antigravity (`agy`) reads that same regular-file tree. It adds no fifth skill copy and no symlinks. `scripts/install-agy-skills-config.sh` creates the file when absent, preserves unrelated entries and top-level keys, leaves an already-registered file byte- and mtime-identical, and refuses with exit 1 and no write when the file or its directories are symlinks or the JSON is malformed.
+
 ```sh
 nix build .#nushell
 nu .agents/skills/lapis/lapis.nu status

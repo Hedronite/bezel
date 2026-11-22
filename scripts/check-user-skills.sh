@@ -178,3 +178,103 @@ bash "$install" "$canonical" "$home"
 [[ -d $home/.cursor/skills/lapis ]] || fail "install did not create a real cursor skills tree"
 [[ ! -e $holder/lapis ]] || fail "install wrote through the skills symlink"
 bash "$install" --check "$canonical" "$home"
+
+# ---------- Antigravity skills.json helper ----------
+# Every behavior G3b promises: create, idempotent no-op, preserve unrelated
+# entries and top-level keys, honor a string-form registration, and fail
+# closed (exit 1, bytes and mtime untouched) on symlinks or bad JSON.
+agy=$script_dir/install-agy-skills-config.sh
+[[ -x $agy ]] || fail "missing $agy"
+ahome=$work/agy/home
+mkdir -p "$ahome"
+bash "$agy" "$ahome" || fail "agy helper failed to create skills.json"
+acfg=$ahome/.gemini/config/skills.json
+[[ -f $acfg && ! -L $acfg ]] || fail "agy skills.json is not a regular file"
+python3 - "$acfg" "$ahome/.agents/skills" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+if not isinstance(doc, dict) or "entries" not in doc:
+    raise SystemExit(f"bad skills.json: {doc}")
+paths = [e for e in doc["entries"] if isinstance(e, dict) and e.get("path") == sys.argv[2]]
+if len(paths) != 1 or len(doc["entries"]) != 1:
+    raise SystemExit(f"skills.json does not register the tree once: {doc}")
+PY
+
+# A second run is a byte- and mtime-identical no-op.
+cp "$acfg" "$work/agy/first.json"
+agy_mtime=$(mtime "$acfg")
+bash "$agy" "$ahome" || fail "agy helper failed on a registered file"
+[[ $(mtime "$acfg") == "$agy_mtime" ]] || fail "agy helper rewrote a registered file"
+cmp -s "$acfg" "$work/agy/first.json" || fail "agy helper changed bytes on a no-op"
+
+# Unrelated entries and other top-level keys survive an update.
+printf '{"version":3,"entries":["plain",{"path":"/opt/other-skills","label":"x"}],"extra":{"keep":true}}\n' >"$acfg"
+bash "$agy" "$ahome" || fail "agy helper failed to update a valid file"
+python3 - "$acfg" "$ahome/.agents/skills" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+want = ["plain", {"path": "/opt/other-skills", "label": "x"},
+        {"path": sys.argv[2]}]
+if doc.get("entries") != want:
+    raise SystemExit(f"entries not preserved + appended: {doc.get('entries')}")
+if doc.get("version") != 3 or doc.get("extra") != {"keep": True}:
+    raise SystemExit(f"top-level keys lost: {doc}")
+PY
+
+# A string-form entry for the same tree also counts as registered.
+stringhome=$work/agy/stringhome
+mkdir -p "$stringhome/.gemini/config"
+printf '{"entries":["%s/.agents/skills"]}\n' "$stringhome" >"$stringhome/.gemini/config/skills.json"
+cp "$stringhome/.gemini/config/skills.json" "$work/agy/string-before.json"
+bash "$agy" "$stringhome" || fail "agy helper rejected a string-form registration"
+cmp -s "$stringhome/.gemini/config/skills.json" "$work/agy/string-before.json" \
+  || fail "agy helper rewrote a string-form registration"
+
+# Refuse a symlinked skills.json without writing through it.
+holder=$work/agy/holder
+mkdir -p "$holder"
+real=$holder/real.json
+printf '{"entries":[]}\n' >"$real"
+cp "$real" "$work/agy/real-before.json"
+real_mtime=$(mtime "$real")
+rm -f "$acfg"
+ln -s "$real" "$acfg"
+status=0
+bash "$agy" "$ahome" 2>/dev/null || status=$?
+[[ $status -eq 1 ]] || fail "agy exit on symlinked skills.json was $status"
+[[ -L $acfg ]] || fail "agy replaced a symlinked skills.json"
+cmp -s "$real" "$work/agy/real-before.json" || fail "agy wrote through a symlink"
+[[ $(mtime "$real") == "$real_mtime" ]] || fail "agy touched a symlink target"
+
+# Refuse a symlinked config directory.
+linkhome=$work/agy/linkhome
+mkdir -p "$linkhome/.gemini" "$work/agy/config-target"
+ln -s "$work/agy/config-target" "$linkhome/.gemini/config"
+status=0
+bash "$agy" "$linkhome" 2>/dev/null || status=$?
+[[ $status -eq 1 ]] || fail "agy exit on symlinked config dir was $status"
+[[ -z "$(ls -A "$work/agy/config-target")" ]] || fail "agy wrote into a symlinked config dir"
+
+# Refuse a symlinked ~/.gemini.
+gemhome=$work/agy/gemhome
+mkdir -p "$gemhome" "$work/agy/gemini-target"
+ln -s "$work/agy/gemini-target" "$gemhome/.gemini"
+status=0
+bash "$agy" "$gemhome" 2>/dev/null || status=$?
+[[ $status -eq 1 ]] || fail "agy exit on symlinked .gemini was $status"
+[[ -z "$(ls -A "$work/agy/gemini-target")" ]] || fail "agy wrote through a symlinked .gemini"
+
+# Malformed JSON, non-object JSON, and non-list entries: exit 1, untouched.
+badhome=$work/agy/badhome
+mkdir -p "$badhome/.gemini/config"
+badcfg=$badhome/.gemini/config/skills.json
+for payload in '{oops' '[]' '{"entries":"x"}' '{"entries":null}'; do
+  printf '%s\n' "$payload" >"$badcfg"
+  cp "$badcfg" "$work/agy/bad-before.json"
+  bad_mtime=$(mtime "$badcfg")
+  status=0
+  bash "$agy" "$badhome" 2>/dev/null || status=$?
+  [[ $status -eq 1 ]] || fail "agy exit on payload [$payload] was $status"
+  cmp -s "$badcfg" "$work/agy/bad-before.json" || fail "agy rewrote bad JSON [$payload]"
+  [[ $(mtime "$badcfg") == "$bad_mtime" ]] || fail "agy touched bad JSON [$payload]"
+done

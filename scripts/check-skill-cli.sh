@@ -733,8 +733,12 @@ printf '{ org_forbidden | priority 10 = [] }\n' >"$gp/v-drop-org.ncl"
 pack_of v-drop-org.ncl >"$gp/pack-drop-org.ncl"
 printf '{ fence_max = 5000 }\n' >"$gp/v-weaken.ncl"
 pack_of v-weaken.ncl >"$gp/pack-weaken.ncl"
-printf '{ fence_max | priority 10 = 5000 }\n' >"$gp/v-weaken-force.ncl"
+printf '{ fence_max | priority 10 = 5000 }\n' >"$gp/v-weaken-priority.ncl"
+pack_of v-weaken-priority.ncl >"$gp/pack-weaken-priority.ncl"
+printf '{ fence_max | force = 5000 }\n' >"$gp/v-weaken-force.ncl"
 pack_of v-weaken-force.ncl >"$gp/pack-weaken-force.ncl"
+printf '{ org_forbidden | force = [] }\n' >"$gp/v-drop-org-force.ncl"
+pack_of v-drop-org-force.ncl >"$gp/pack-drop-org-force.ncl"
 printf '{ fence_max | priority 10 = 3000 }\n' >"$gp/v-tighten.ncl"
 pack_of v-tighten.ncl >"$gp/pack-tighten.ncl"
 printf '{ forbidden = ["overlay only"] }\n' >"$gp/v-forbidden-a.ncl"
@@ -842,12 +846,30 @@ gp_forbidden positive-rules "$gp/vault/foundry/demo/schema/m1/goal.instance.json
   "pushing main" "draft PRs" "private names in commit text" "placeholder text in shipped copy"
 [[ -f "$gp/vault/foundry/demo/GOAL-m1.md" ]] || fail "goal-pack did not write GOAL-m1.md"
 
+unset NICKEL_BIN || true
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack.ncl" --vault "$gp/vault-nonickel" --facts "$gp/facts.json" --nickel /nonexistent
+if ! python3 - "$work/out" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+if doc["ok"] is not False or doc["command"] != "materialize" or doc["exit"] != 127:
+    raise SystemExit(f"missing-nickel envelope: {doc}")
+if doc["data"] is not None or not doc["error"]:
+    raise SystemExit(f"missing-nickel row: {doc}")
+PY
+then
+  fail "goal-pack case 'missing-nickel' failed"
+fi
+[[ -z "$(ls -A "$gp/vault-nonickel" 2>/dev/null)" ]] \
+  || fail "goal-pack case 'missing-nickel' wrote files"
+
 export NICKEL_BIN="$nickel"
 run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack-tighten.ncl" --vault "$gp/vault-tight" --facts "$gp/facts.json"
 gp_check tighten "$work/out" 0
 
 run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack-weaken.ncl" --vault "$gp/vault-weaken" --facts "$gp/facts.json"
 gp_check weaken-plain "$work/out" 2 FENCE_CAP_WEAKENED
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack-weaken-priority.ncl" --vault "$gp/vault-weaken" --facts "$gp/facts.json"
+gp_check weaken-priority "$work/out" 2 FENCE_CAP_WEAKENED
 run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack-weaken-force.ncl" --vault "$gp/vault-weaken" --facts "$gp/facts.json"
 gp_check weaken-force "$work/out" 2 FENCE_CAP_WEAKENED
 
@@ -858,6 +880,8 @@ gp_forbidden c1-org-survives "$gp/vault-priority/foundry/demo/schema/m1/goal.ins
 
 run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack-drop-org.ncl" --vault "$gp/vault-drop" --facts "$gp/facts.json"
 gp_check c1-drop-org "$work/out" 2 LAYER_WEAKENED
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack-drop-org-force.ncl" --vault "$gp/vault-drop" --facts "$gp/facts.json"
+gp_check c1-drop-org-force "$work/out" 2 LAYER_WEAKENED
 python3 - "$work/out" <<'PY'
 import json, sys
 doc = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -920,7 +944,7 @@ cat >"$gp/raw-empty-segment.ncl" <<'NCL'
 }
 NCL
 run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/raw-empty-segment.ncl" --vault "$gp/vault-defense" --force
-gp_check defense-empty-segment "$work/out" 2 NICKEL_ERROR
+gp_check defense-empty-segment "$work/out" 2 PATH_UNSAFE
 [[ ! -e "$gp/vault-defense/foundry/demo/schema/bad.json" ]] \
   || fail "goal-pack case 'defense-empty-segment' wrote an unsafe path"
 
@@ -936,7 +960,7 @@ cat >"$gp/raw-out-of-product.ncl" <<'NCL'
 }
 NCL
 run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/raw-out-of-product.ncl" --vault "$gp/vault-defense" --force
-gp_check defense-out-of-product "$work/out" 2 NICKEL_ERROR
+gp_check defense-out-of-product "$work/out" 2 PATH_UNSAFE
 [[ ! -e "$gp/vault-defense/foundry/other/README.md" ]] \
   || fail "goal-pack case 'defense-out-of-product' wrote outside the product"
 

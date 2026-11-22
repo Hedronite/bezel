@@ -13,9 +13,6 @@ def emit [ok: bool, command: string, exit_code: int, data: any, error: any] {
     error: $error
   }
   print ($doc | to json --raw)
-  if not $ok {
-    exit $exit_code
-  }
 }
 
 def fail [command: string, code: int, msg: string] {
@@ -131,9 +128,17 @@ def main [
   let res = (try {
     ^$nk export --format json --error-format json $ncl_file | complete
   } catch {|e|
-    { exit_code: 127, stdout: "", stderr: ($e | into string) }
+    let why = ($e.msg? | default "failed to invoke nickel")
+    { exit_code: 127, stdout: "", stderr: $"nickel: ($why)" }
   })
   let nickel_ms = (((date now) - $tn0) / 1ms | math round -p 1)
+
+  if $res.exit_code == 127 {
+    # A missing binary is the envelope, never a crash or a non-zero exit.
+    let why = ($res.stderr | str trim)
+    fail "materialize" 127 (if $why == "" { "failed to invoke nickel" } else { $why })
+    return
+  }
 
   if $res.exit_code != 0 {
     let raw_err = if ($res.stderr | str trim) != "" { $res.stderr } else { $res.stdout }
@@ -255,7 +260,7 @@ def main [
     let rel = ($f | get -o path | default "")
     let create_only = ($f | get -o create_only | default false)
     if (not (is-safe-relpath $rel)) or (not ($rel | str starts-with $expected_prefix)) {
-      $pre_violations = ($pre_violations | append { code: "NICKEL_ERROR", detail: $"unsafe relative path in files[]: '($rel)'" })
+      $pre_violations = ($pre_violations | append { code: "PATH_UNSAFE", detail: $"unsafe relative path in files[]: '($rel)'" })
       continue
     }
     if $root != "" {
@@ -322,7 +327,13 @@ def main [
       # Defence in depth: assert exact rm -rf target before any destructive delete.
       if (not (is-valid-ident $product)) or (not (is-valid-ident $slug)) or ($dst_schema_dir != $"($root)/foundry/($product)/schema/($slug)") or (($dst_schema_dir | path dirname) != $dst_schema_parent) or (($dst_schema_dir | path basename) != $slug) {
         rm -rf $stage
-        fail "materialize" 2 $"refusing unsafe schema target: ($dst_schema_dir)"
+        emit true "materialize" 2 {
+          passed: false
+          stage: "schema"
+          violation_count: 1
+          violations: [{ code: "PATH_UNSAFE", detail: $"refusing unsafe schema target: ($dst_schema_dir)" }]
+          blame: null
+        } null
         return
       }
       mkdir $dst_schema_parent

@@ -45,8 +45,14 @@ Each run prints one JSON line and nothing else:
 ```
 
 `ok` says the command executed. `exit` is the verdict: `0` success, `2`
-refused (contract, identity, seat, collision). Refusals still exit the
-process `0` so callers read the envelope, never `$?`.
+refused (contract, identity, seat, collision, unsafe path), `127` could not
+invoke `nickel`. Refusals still exit the process `0` so callers read the
+envelope, never `$?`.
+
+If `nickel` cannot be invoked at all (bad `--nickel`, unset `$NICKEL_BIN`,
+and no `nickel` on `PATH`), the run prints
+`{ ok: false, command: "materialize", exit: 127, data: null, error: "..." }`,
+writes nothing, and still exits the process `0` with empty stderr.
 
 ## Intent
 
@@ -102,6 +108,10 @@ fence and `goal.instance.json`. A downstream layer may add items and may never
 silently drop an upper layer's items: field contracts survive every merge,
 including `| priority 10` and `| force`. Dropping one is `LAYER_WEAKENED`.
 
+The protection is opt-in per field: an overlay list set **without**
+`law.list_floor` is unprotected, and a later layer can replace it. Bind the
+floor to every additive list an upper layer owns.
+
 The same monotone rule holds for the other knobs: `fence_max` may tighten
 (`FENCE_CAP_WEAKENED` above 3,800), `standing` rows S1–S4 may not disappear
 (`STANDING_WEAKENED`), and `forbidden_phrases` may only grow
@@ -124,7 +134,8 @@ The same monotone rule holds for the other knobs: `fence_max` may tighten
 | `IDENT_INVALID` | product, slug, or role is not a lower-case identifier |
 | `G_OWNER_UNKNOWN` | a role is not present in `--facts` seats |
 | `STAGE_COLLISION` | a target file exists and is not `create_only` |
-| `NICKEL_ERROR` | Nickel rejected the pack without a coded diagnostic |
+| `PATH_UNSAFE` | a `files[]` path leaves the product, has an empty segment or `..`, or the destructive `schema/<slug>/` target did not assert |
+| `NICKEL_ERROR` | Nickel rejected the pack and no coded diagnostic line exists |
 
 Coded violations arrive as `CODE: detail` lines. A whole-pack contract reports
 every violation at once (`PACK_INVALID: N violation(s)` with one entry per

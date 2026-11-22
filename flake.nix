@@ -87,8 +87,10 @@
             grok-build-jev
             omp-runtime
             omp-pin
-            # Skill interpreter. Pinned by the nixpkgs lock, not a second input.
+            # Skill interpreters (Nushell for skill bodies, Nickel for pack
+            # law). Pinned by the nixpkgs lock, not a second input.
             nushell
+            nickel
             ;
           default = pkgs.bezel;
         }
@@ -680,6 +682,7 @@
           skills-cli = pkgs.runCommand "skills-cli" {
             nativeBuildInputs = [
               pkgs.nushell
+              pkgs.nickel
               pkgs.python3
               pkgs.bash
             ];

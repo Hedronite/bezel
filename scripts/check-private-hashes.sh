@@ -122,7 +122,7 @@ def mask_segment(segment, salt, hashes, lengths):
         matched = 0
         for size in lengths:
             if index + size <= len(segment):
-                if digest(salt, segment[index : index + size]) in hashes:
+                if digest(salt, segment[index : index + size].lower()) in hashes:
                     matched = size
                     break
         if matched:
@@ -155,15 +155,8 @@ def scan_file(path, rel, salt, hashes, lengths, report):
         return
     if b"\0" in raw:
         return
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return
+    text = raw.decode("utf-8", errors="replace")
     masked = mask_path(rel, salt, hashes, lengths)
-    path_hit = hit_hash(rel.lower(), salt, hashes, lengths)
-    if path_hit is not None:
-        report(f"sha256:{path_hit[:12]} path {masked}")
-        return
     for number, line in enumerate(text.splitlines(), 1):
         value = hit_hash(line.lower(), salt, hashes, lengths)
         if value is not None:
@@ -172,21 +165,45 @@ def scan_file(path, rel, salt, hashes, lengths, report):
 
 
 def scan(paths, salt, hashes, lengths, report):
+    def check_name(rel):
+        value = hit_hash(rel.lower(), salt, hashes, lengths)
+        if value is not None:
+            report(f"sha256:{value[:12]} path {mask_path(rel, salt, hashes, lengths)}")
+            return True
+        return False
+
     for target in paths:
         if os.path.isdir(target):
             base = os.path.abspath(target)
             for current, dirs, files in os.walk(target):
-                dirs[:] = sorted(d for d in dirs if d != ".git")
-                for name in sorted(files):
+                kept = []
+                for name in sorted(dirs):
+                    if name == ".git":
+                        continue
                     full = os.path.join(current, name)
+                    rel = os.path.relpath(full, base)
+                    if os.path.islink(full):
+                        # Git records symlink names; check the name, never follow.
+                        check_name(rel)
+                        continue
+                    kept.append(name)
+                dirs[:] = kept
+                for name in sorted(files):
+                    if name == ".git":
+                        # A worktree .git is a file; skip it like the directory.
+                        continue
+                    full = os.path.join(current, name)
+                    rel = os.path.relpath(full, base)
+                    if check_name(rel):
+                        continue
                     if os.path.islink(full):
                         continue
-                    rel = os.path.relpath(full, base)
                     scan_file(full, rel, salt, hashes, lengths, report)
         elif os.path.isfile(target):
-            scan_file(target, os.path.basename(target), salt, hashes, lengths, report)
+            if not check_name(os.path.basename(target)):
+                scan_file(target, os.path.basename(target), salt, hashes, lengths, report)
         else:
-            print(f"{PREFIX}: path not found: {target}", file=sys.stderr)
+            print(f"{PREFIX}: path not found", file=sys.stderr)
             raise SystemExit(2)
 
 

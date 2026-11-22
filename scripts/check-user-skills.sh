@@ -127,18 +127,18 @@ cmp -s "$canonical/lapis/SKILL.md" "$home/.grok/skills/lapis/SKILL.md" || fail "
 [[ $(file_mode "$live") == 700 ]] || fail "--force changed a matching file's mode"
 bash "$install" --check "$canonical" "$home"
 
-# castle: ~/.local/bin/lapisq points at the live lapis.nu. Refuse leaves the
+# A live binary symlink points at the installed lapis.nu. Refuse leaves the
 # symlink, the bytes, and the mode. --force updates the bytes only.
-printf '\n# castle\n' >>"$live"
+printf '\n# local marker\n' >>"$live"
 mkdir -p "$home/.local/bin"
 ln -s "$live" "$home/.local/bin/lapisq"
-castle=$(cat "$live")
+livebytes=$(cat "$live")
 status=0
 bash "$install" "$canonical" "$home" 2>"$err" || status=$?
 [[ $status -eq 1 ]] || fail "install exit on live lapis.nu was $status"
 grep -F -q "byte drift: $live" "$err" || fail "drift report missed lapis.nu"
 [[ $(readlink "$home/.local/bin/lapisq") == "$live" ]] || fail "refusing install changed lapisq"
-[[ $(cat "$live") == "$castle" ]] || fail "refusing install changed live lapis.nu"
+[[ $(cat "$live") == "$livebytes" ]] || fail "refusing install changed live lapis.nu"
 [[ $(file_mode "$live") == 700 ]] || fail "refusing install changed live lapis.nu mode"
 [[ -x $home/.local/bin/lapisq ]] || fail "lapisq was not executable after refuse"
 bash "$install" --force "$canonical" "$home"

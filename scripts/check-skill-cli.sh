@@ -972,7 +972,7 @@ guard=$script_dir/check-private-hashes.sh
 priv=$work/private
 mkdir -p "$priv/clean"
 printf 'ordinary text here\n' >"$priv/clean/note.md"
-printf 'QuuxBox\n  plughhost  \n# comment\n\n' | "$guard" --hash synthetic-salt >"$priv/hashes.json"
+printf 'QuuxBox\n  plughhost  \n# comment\n\n' | bash "$guard" --hash synthetic-salt >"$priv/hashes.json"
 python3 - "$priv/hashes.json" <<'PY'
 import json, sys
 doc = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -986,14 +986,14 @@ PY
 
 unset BEZEL_PRIVATE_HASHES || true
 status=0
-"$guard" --hash-file "$priv/hashes.json" "$priv/clean" >"$priv/out" 2>"$priv/err" || status=$?
+bash "$guard" --hash-file "$priv/hashes.json" "$priv/clean" >"$priv/out" 2>"$priv/err" || status=$?
 [[ $status -eq 0 ]] || fail "private guard failed a clean tree ($status)"
 [[ ! -s $priv/out && ! -s $priv/err ]] || fail "private guard printed on a clean tree"
 
 mkdir -p "$priv/token"
 printf 'we ship quuxbox now\n' >"$priv/token/note.md"
 status=0
-"$guard" --hash-file "$priv/hashes.json" "$priv/token" >"$priv/out" 2>"$priv/err" || status=$?
+bash "$guard" --hash-file "$priv/hashes.json" "$priv/token" >"$priv/out" 2>"$priv/err" || status=$?
 [[ $status -eq 1 ]] || fail "private guard missed a token hit ($status)"
 grep -q 'sha256:' "$priv/out" || fail "private guard hit has no hash prefix"
 grep -q 'line 1' "$priv/out" || fail "private guard hit has no line number"
@@ -1004,7 +1004,7 @@ fi
 mkdir -p "$priv/substring"
 printf 'prequuxboxpost\n' >"$priv/substring/note.md"
 status=0
-"$guard" --hash-file "$priv/hashes.json" "$priv/substring" >"$priv/out" 2>"$priv/err" || status=$?
+bash "$guard" --hash-file "$priv/hashes.json" "$priv/substring" >"$priv/out" 2>"$priv/err" || status=$?
 [[ $status -eq 1 ]] || fail "private guard missed an embedded substring ($status)"
 grep -q 'line 1' "$priv/out" || fail "substring hit has no line number"
 if grep -qi 'quuxbox' "$priv/out" "$priv/err"; then
@@ -1014,7 +1014,7 @@ fi
 mkdir -p "$priv/pathroot/quuxbox-dir"
 printf 'ordinary text\n' >"$priv/pathroot/quuxbox-dir/note.md"
 status=0
-"$guard" --hash-file "$priv/hashes.json" "$priv/pathroot" >"$priv/out" 2>"$priv/err" || status=$?
+bash "$guard" --hash-file "$priv/hashes.json" "$priv/pathroot" >"$priv/out" 2>"$priv/err" || status=$?
 [[ $status -eq 1 ]] || fail "private guard missed a path hit ($status)"
 grep -q 'path' "$priv/out" || fail "path hit does not say path"
 grep -q '\[REDACTED\]' "$priv/out" || fail "path hit is not masked"
@@ -1025,24 +1025,88 @@ if grep -qF "$priv" "$priv/out" "$priv/err"; then
   fail "private guard printed an absolute path"
 fi
 
+# Masking is case-insensitive: a capitalised directory or upper-case file
+# name is detected and redacted, never echoed.
+mkdir -p "$priv/pathcase/QuuxBoxHost"
+printf 'ordinary text
+' >"$priv/pathcase/QuuxBoxHost/a.md"
 status=0
-"$guard" --hash-file "$priv/missing.json" "$priv/clean" >"$priv/out" 2>"$priv/err" || status=$?
+bash "$guard" --hash-file "$priv/hashes.json" "$priv/pathcase" >"$priv/out" 2>"$priv/err" || status=$?
+[[ $status -eq 1 ]] || fail "private guard missed a capitalised path ($status)"
+grep -q '\[REDACTED\]' "$priv/out" || fail "capitalised path is not masked"
+if grep -qi 'quuxbox' "$priv/out" "$priv/err"; then
+  fail "private guard echoed a capitalised path term"
+fi
+
+mkdir -p "$priv/pathcase2"
+printf 'ordinary text
+' >"$priv/pathcase2/QUUXBOX-NOTES.md"
+status=0
+bash "$guard" --hash-file "$priv/hashes.json" "$priv/pathcase2" >"$priv/out" 2>"$priv/err" || status=$?
+[[ $status -eq 1 ]] || fail "private guard missed an upper-case file name ($status)"
+grep -q '\[REDACTED\]' "$priv/out" || fail "upper-case file name is not masked"
+if grep -qi 'quuxbox' "$priv/out" "$priv/err"; then
+  fail "private guard echoed an upper-case file term"
+fi
+
+# A symlink's own name is checked without following it.
+mkdir -p "$priv/linkroot"
+ln -s "$priv/clean/note.md" "$priv/linkroot/quuxbox-link"
+status=0
+bash "$guard" --hash-file "$priv/hashes.json" "$priv/linkroot" >"$priv/out" 2>"$priv/err" || status=$?
+[[ $status -eq 1 ]] || fail "private guard missed a symlink name ($status)"
+grep -q '\[REDACTED\]' "$priv/out" || fail "symlink name is not masked"
+if grep -qi 'quuxbox' "$priv/out" "$priv/err"; then
+  fail "private guard echoed a symlink name"
+fi
+
+# Non-UTF-8 text is scanned with replacement; a NUL byte still means binary.
+mkdir -p "$priv/nonutf"
+printf '\377 quuxbox\n' >"$priv/nonutf/note.md"
+status=0
+bash "$guard" --hash-file "$priv/hashes.json" "$priv/nonutf" >"$priv/out" 2>"$priv/err" || status=$?
+[[ $status -eq 1 ]] || fail "private guard skipped a non-UTF-8 text file ($status)"
+if grep -qi 'quuxbox' "$priv/out" "$priv/err"; then
+  fail "private guard echoed a non-UTF-8 hit"
+fi
+
+# A worktree .git file is skipped like a .git directory.
+mkdir -p "$priv/gitdir"
+printf 'gitdir: quuxbox\n' >"$priv/gitdir/.git"
+printf 'ordinary text\n' >"$priv/gitdir/note.md"
+status=0
+bash "$guard" --hash-file "$priv/hashes.json" "$priv/gitdir" >"$priv/out" 2>"$priv/err" || status=$?
+[[ $status -eq 0 ]] || fail "private guard scanned a .git file ($status)"
+
+status=0
+bash "$guard" --hash-file "$priv/missing.json" "$priv/clean" >"$priv/out" 2>"$priv/err" || status=$?
 [[ $status -eq 2 ]] || fail "private guard exit on a missing hash file was $status"
+
+# A missing scan path never echoes the path, even when it holds a term.
+status=0
+bash "$guard" --hash-file "$priv/hashes.json" "$priv/quuxbox-missing" >"$priv/out" 2>"$priv/err" || status=$?
+[[ $status -eq 2 ]] || fail "private guard exit on a missing scan path was $status"
+if grep -qi 'quuxbox' "$priv/out" "$priv/err"; then
+  fail "private guard echoed a missing scan path term"
+fi
+if grep -qF "$priv" "$priv/out" "$priv/err"; then
+  fail "private guard printed an absolute missing path"
+fi
 
 printf '{oops\n' >"$priv/bad.json"
 status=0
-"$guard" --hash-file "$priv/bad.json" "$priv/clean" >"$priv/out" 2>"$priv/err" || status=$?
+bash "$guard" --hash-file "$priv/bad.json" "$priv/clean" >"$priv/out" 2>"$priv/err" || status=$?
 [[ $status -eq 2 ]] || fail "private guard exit on malformed JSON was $status"
 if grep -q 'Traceback' "$priv/err"; then
   fail "private guard printed a traceback"
 fi
 
 status=0
-env -u BEZEL_PRIVATE_HASHES "$guard" "$priv/clean" >"$priv/out" 2>"$priv/err" || status=$?
+env -u BEZEL_PRIVATE_HASHES bash "$guard" "$priv/clean" >"$priv/out" 2>"$priv/err" || status=$?
 [[ $status -eq 0 ]] || fail "private guard exit without a hash file was $status"
 
 status=0
-BEZEL_PRIVATE_HASHES="$priv/hashes.json" "$guard" "$priv/token" >"$priv/out" 2>"$priv/err" || status=$?
+BEZEL_PRIVATE_HASHES="$priv/hashes.json" bash "$guard" "$priv/token" >"$priv/out" 2>"$priv/err" || status=$?
 [[ $status -eq 1 ]] || fail "private guard env hash file exit was $status"
 
 echo "check-skill-cli: ok"

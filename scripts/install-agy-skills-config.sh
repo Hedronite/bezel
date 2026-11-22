@@ -95,11 +95,29 @@ else:
         refuse(f"{target} entries is not a list")
 
 
+def normalize(candidate):
+    """Resolve ~, ~/ and $HOME forms against the HOME argument, not the env."""
+    text = str(candidate)
+    if text == "~":
+        text = home
+    elif text.startswith("~/"):
+        text = os.path.join(home, text[2:])
+    elif text == "${HOME}":
+        text = home
+    elif text.startswith("${HOME}/"):
+        text = os.path.join(home, text[len("${HOME}/") :])
+    elif text == "$HOME":
+        text = home
+    elif text.startswith("$HOME/"):
+        text = os.path.join(home, text[len("$HOME/") :])
+    return os.path.normpath(text)
+
+
 def registered(entry):
     if isinstance(entry, str):
-        return os.path.normpath(entry) == desired
+        return normalize(entry) == desired
     if isinstance(entry, dict):
-        return os.path.normpath(str(entry.get("path", ""))) == desired
+        return normalize(entry.get("path", "")) == desired
     return False
 
 

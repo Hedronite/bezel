@@ -230,6 +230,22 @@ bash "$agy" "$stringhome" || fail "agy helper rejected a string-form registratio
 cmp -s "$stringhome/.gemini/config/skills.json" "$work/agy/string-before.json" \
   || fail "agy helper rewrote a string-form registration"
 
+# Tilde, $HOME, and ${HOME} forms resolve against the HOME argument, so an
+# entry that names the same tree is recognized instead of duplicated.
+for form in '~/.agents/skills' '$HOME/.agents/skills' '${HOME}/.agents/skills'; do
+  formhome=$work/agy/formhome
+  rm -rf "$formhome"
+  mkdir -p "$formhome/.gemini/config"
+  printf '{"entries":[{"path":"%s"}]}\n' "$form" >"$formhome/.gemini/config/skills.json"
+  cp "$formhome/.gemini/config/skills.json" "$work/agy/form-before.json"
+  form_mtime=$(mtime "$formhome/.gemini/config/skills.json")
+  bash "$agy" "$formhome" || fail "agy helper rejected the [$form] registration"
+  cmp -s "$formhome/.gemini/config/skills.json" "$work/agy/form-before.json" \
+    || fail "agy helper rewrote the [$form] registration"
+  [[ $(mtime "$formhome/.gemini/config/skills.json") == "$form_mtime" ]] \
+    || fail "agy helper touched the [$form] registration"
+done
+
 # Refuse a symlinked skills.json without writing through it.
 holder=$work/agy/holder
 mkdir -p "$holder"

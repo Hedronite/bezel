@@ -40,7 +40,7 @@ Bezel is the supplement, not the harness. It ships the suite in one Nix flake: s
 
 | Piece | What you get |
 | --- | --- |
-| Skills | Flake input `inputs.skills` (`.agents/skills/`). Each skill is a directory with `SKILL.md`. Lapis, Facet, Geode, and Phantom default to that skill plus the CLI. Home Manager copies each skill directory as regular files into the user directory each harness reads. |
+| Skills | Flake input `inputs.skills` (`.agents/skills/`). Each skill is a directory with `SKILL.md`. Lapis, Facet, Geode, and Phantom default to that skill plus the CLI; `goal-pack` renders a goal pack from a Nickel intent. Home Manager copies each skill directory as regular files into the user directory each harness reads. |
 | Jev | `jev-router` asks Typesafe for one policy decision and prints one JSON verdict. Shadow, the default, logs the verdict and does not block. |
 | Toolkit | `jev-router --catalog` prints a small tool index. `--schema NAME` prints one JSON Schema. Reading a schema does not allow the tool. `--check` is a shadow diff check. |
 | Cursor | `cursor-agent-jev` runs the gate, then execs `cursor-agent`. |
@@ -100,6 +100,7 @@ The product name is Bezel. The repository is [VirtualMachinist/bezel](https://gi
 | **`cursor-agent-jev`** | Runs `jev-router`, then execs `cursor-agent` (`cursor-agent` must already be on `PATH`). Shadow never blocks. Active honors continue and `gate: auto` only. `--catalog` and `--schema` print and do not exec. |
 | **`grok-build-jev`** | Grok Build PreToolUse adapter. Calls `jev-router` and prints `defer` or `deny`. Does not install a host hook. |
 | **`nushell`** | Interpreter for the Lapis, Facet, Geode, and Phantom skill bodies. The version is the nixpkgs pin in `flake.lock`. |
+| **`nickel`** | Contract interpreter for the `goal-pack` skill. Same nixpkgs pin as Nushell; no second flake input. |
 
 `packages.default` is `bezel`.
 
@@ -199,8 +200,11 @@ The tree includes `bootstrap`, the shadow `check` skill (`jev-router --check`), 
 | `facet` | Request history, read-only | `nu facet.nu`, over `facet … --json` |
 | `geode` | Custody status, metadata only | `nu geode.nu`, over `geode --output json` |
 | `phantom` | Code graph: where a name is defined, callers, impact, call paths, and which files change together | `nu phantom.nu`, or a `phantomq` wrapper if you have one, over `phantom-fractal` on `PATH` or `$PHANTOM_FRACTAL_BIN` |
+| `goal-pack` | Multi-role goal pack from one compact Nickel intent (hub, REVIEW, SPEC, CHECKLIST, RUBRIC, GOAL, schemas, briefs), judged by contracts before any write | `nu materialize.nu`, over `nickel export`; `law.ncl` holds the contracts |
 
 `phantom` is Phantom's own skill, a byte copy of Phantom `main` that is never edited here. It keeps Phantom's envelope, not the shared one below. An agent may run its `index` whenever the index is missing or stale; it writes only to Phantom's own data directory, never to the repository. [`.agents/skills/README.md`](.agents/skills/README.md) records the commit it was copied from.
+
+`goal-pack` is the Tier-2 skill: `SKILL.md`, `law.ncl`, and `materialize.nu`. A pack is `law.ncl & org overlay & pack intent`, exported by Nickel and written by `materialize.nu`. Additive lists are per layer (`forbidden`, `org_forbidden`, `pack_forbidden`) and the upper layer binds `law.list_floor` to its own field, so `| priority 10` and `| force` can add rules but never silently drop one. Both interpreters are pinned by the nixpkgs lock, and `scripts/check-skill-cli.sh` exercises the skill under `nix flake check`.
 
 ### Agent use: skills + CLI first, MCP still shipped
 
@@ -247,7 +251,7 @@ If a later release drops a platform build, `packages/omp-pin.nix` **throws** for
 - Jev defaults to shadow. `jev-router --check` is the shadow diff check. Empty findings are not approval. Loop-stop is shadow-first. Active `stop` and `escalate` do not exec.
 - The tool catalog is a small always-on index of the existing policy ids. Full schema is `jev-router --schema NAME` and is not an allow. Permission catalogs stay shadow.
 - `grok-build-jev` adapts those controls for Grok Build. Default modes stay shadow. The harness does not install a host hook.
-- Skills ship as `.agents/skills`, the flake's only skills tree. Lapis, Facet, and Geode are read-only skills there, and Phantom's code-graph skill is a byte copy of Phantom `main`: skill plus CLI is the default, and MCP remains supported. Nushell is pinned by the nixpkgs lock.
+- Skills ship as `.agents/skills`, the flake's only skills tree. Lapis, Facet, and Geode are read-only skills there, and Phantom's code-graph skill is a byte copy of Phantom `main`: skill plus CLI is the default, and MCP remains supported. `goal-pack` is the Tier-2 skill: a Nickel law renders a goal pack and Nushell writes it. Nushell and Nickel are pinned by the nixpkgs lock.
 - `bezel-omp` passes an omp config overlay that widens tool-output lines to 8192 bytes. `BEZEL_OMP_OVERLAY=0` turns it off.
 - Nix packaging stays. The router stays JavaScript.
 

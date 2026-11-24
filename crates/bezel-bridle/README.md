@@ -8,7 +8,7 @@ Bridle for a coding harness. Not the harness, and not the crates.io crate [`beze
 
 The crate does not call a model and does not exec an agent. Its one live command, `facet request run --environment typesafe --no-record`, is built in `cli.rs` and compiled off (`LIVE_ON = false`). Verdicts are computed offline, with recorded fixtures in `packages/jev-router/testdata` standing in for the model.
 
-The JavaScript prototype has been removed. Its assertions live on as the `tests/oracle_*.rs` suites and the unit tests in `src/oracle.rs`:
+The JavaScript prototype has been removed. Its assertions live on as the unit tests in `src/oracle.rs`, which the Nix check `jev-router-unit` runs, and the `tests/oracle_*.rs` suites, which run only under `cargo test` from a clone:
 
 ```sh
 cargo test --manifest-path crates/bezel-bridle/Cargo.toml

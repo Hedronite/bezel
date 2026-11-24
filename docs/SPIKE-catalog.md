@@ -1,5 +1,9 @@
 # Bezel tool catalog and schema dump
 
+> Spike notes, 2026-09. The behavior below ships in the Rust `jev-router`
+> (`crates/bezel-bridle`). Its live transport is off in this release, so verdicts
+> are computed offline. See the README.
+
 Give `cursor-agent-jev` a **tiny always-on catalog** of the PreToolUse tools,
 and an on-demand **schema dump** for one tool. Same `jev-router`, same three
 policy ids, no second TypeSafe client.
@@ -56,7 +60,7 @@ not a typed call. Ranking an intent into a FACET `tool_call` is
 ## Tests without live Jev
 
 ```sh
-node packages/jev-router/test.mjs
+cargo test --manifest-path crates/bezel-bridle/Cargo.toml
 nix flake check -L   # jev-tool-catalog, plus the existing router checks
 ```
 

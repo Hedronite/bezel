@@ -3,9 +3,10 @@
 Grok hooks and Bezel share one map and one `JEV_BYPASS` predicate.
 The hook calls `jev-router`. It does not construct a TypeSafe client.
 
-Canonical matcher and class table: `PRETOOL_MATCHER` / `PRETOOL_CLASSES` in
-`packages/jev-router/policy.mjs`. If this page and that module disagree, the
-module wins — `node packages/jev-router/test.mjs` checks the fence below.
+Canonical matcher and class table: `PRETOOL_MATCHER` and `match_pretool_class` in
+`crates/bezel-bridle/src/policy.rs`. If this page and that module disagree, the
+module wins. The crate test `router_source_policy_map_wrap_and_one_json_line`
+checks the fence below.
 
 ## GateVerdict
 
@@ -37,7 +38,7 @@ and it is not Jev state.
 
 ## Policy map
 
-Same three policy ids already in `policy.mjs`. Permission catalogs wrap these
+Same three policy ids already in `policy.rs`. Permission catalogs wrap these
 ids. They do not add a policyId. See [Permission catalogs](#permission-catalogs).
 
 | Class | policyId | Choice family | Grok tool names |
@@ -115,7 +116,7 @@ process *is* the gate. The hook is not.
 
 ## Hook decision (code deny, no auto-allow)
 
-`pretoolHookDecision` in `policy.mjs` is the table. The hook implements it.
+`pretool_hook_decision` in `policy.rs` is the table. The hook implements it.
 It does not ask the model to allow.
 
 | Verdict | Stdout | Exit |
@@ -198,7 +199,7 @@ router's `state`.
 ## Tests
 
 ```sh
-node packages/jev-router/test.mjs
+cargo test --manifest-path crates/bezel-bridle/Cargo.toml
 nix flake check -L   # jev-router-unit, jev-bypass (1, true, and not yes)
 ```
 
@@ -250,8 +251,8 @@ A mapped tool dumps one schema with `decision: defer` and `autoAllow: false`.
 An unmapped name (`read_file`, `use_tool`) is `decision: deny`, `schema: null`,
 exit 2. `decision` is never `allow`.
 
-`buildGateState` puts the tiny index on the existing `systemOne` state and
-strips `TYPESAFE_API_KEY`. There is still one TypeSafe client. No new
+`build_gate_state` (`catalog.rs`) puts the tiny index on the existing `systemOne` state and
+strips `TYPESAFE_API_KEY`. There is still one live transport, and it is off. No new
 policyId. An MCP schema dump sets `typedCall: false` because the dump is not
 a typed call. This index does not read `JEV_PERMISSION_MODE` and does not
 flip permission catalogs to active.

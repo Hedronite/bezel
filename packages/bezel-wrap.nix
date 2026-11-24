@@ -61,7 +61,7 @@ stdenvNoCC.mkDerivation {
 
   meta = {
     description = "Bezel omp engine path. Runs upstream omp with the Bezel toolkit on PATH";
-    homepage = "https://github.com/VirtualMachinist/bezel";
+    homepage = "https://github.com/Hedronite/bezel";
     mainProgram = "bezel-omp";
     license = lib.licenses.mit;
     platforms = ompBinary.meta.platforms or lib.platforms.unix;

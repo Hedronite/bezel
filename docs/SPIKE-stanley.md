@@ -1,5 +1,9 @@
 # Bezel shadow diff check (`jev-router --check`)
 
+> Spike notes, 2026-09. The behavior below ships in the Rust `jev-router`
+> (`crates/bezel-bridle`). Its live transport is off in this release, so verdicts
+> are computed offline. See the README.
+
 Bounded check: code gathers evidence, Jev classifies, code applies thresholds.
 **Do not** vendor
 [stanley-code](https://github.com/devagrawal09/stanley-code), install that
@@ -68,7 +72,7 @@ In shadow it also:
 ## Tests without live Jev
 
 ```sh
-node packages/jev-router/test.mjs
+cargo test --manifest-path crates/bezel-bridle/Cargo.toml
 nix flake check -L   # includes jev-router-unit + jev-check-shadow
 ```
 

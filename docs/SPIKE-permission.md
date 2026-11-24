@@ -1,5 +1,9 @@
 # Bezel permission Choice catalogs (shadow)
 
+> Spike notes, 2026-09. The behavior below ships in the Rust `jev-router`
+> (`crates/bezel-bridle`). Its live transport is off in this release, so verdicts
+> are computed offline. See the README.
+
 Extend the PreToolUse gate with a permission view for **shell**, **write**, and
 **MCP**. This wraps the families that already exist. It is not a second
 TypeSafe client and it does not add a policyId.
@@ -74,7 +78,7 @@ jev-router --tool-name linear__save_issue --intent "file a ticket"
 ## Tests without live Jev
 
 ```sh
-node packages/jev-router/test.mjs
+cargo test --manifest-path crates/bezel-bridle/Cargo.toml
 ```
 
 No key + shadow: permission `missingKey`, `blocked: false`, policyId set.

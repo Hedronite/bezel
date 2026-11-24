@@ -7,7 +7,7 @@
 # Success exec is silent: no launch line, and the router's stderr is not
 # forwarded onto the child. Failures still explain on stderr.
 # JEV_BYPASS is only "1" or "true" — same predicate as isJevBypass in
-# packages/jev-router/policy.mjs. Do not add another spelling here.
+# crates/bezel-bridle/src/policy.rs. Do not add another spelling here.
 # Active: stop/escalate do NOT exec; continue / gate=auto execs. Escalate is HITL.
 # --catalog / --schema do not exec cursor-agent and do not start a second client.
 # On exec, JEV_TOOL_CATALOG is the tiny index (no JSON Schema, no API key).

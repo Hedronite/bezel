@@ -4,7 +4,7 @@
 `jev-router`. Grok Build calls the adapter. The adapter calls `jev-router`.
 Policy ids, the class map, permission catalogs, the tiny tool index, and
 FACET calls stay in those modules. This process does not construct a
-TypeSafe client and does not copy `PRETOOL_CLASSES`.
+TypeSafe client and does not copy the class map.
 
 The adapter does not install a host hook and does not change a live Grok
 config. `config` prints a hook document an operator can review.
@@ -19,8 +19,8 @@ decision line on stderr. There is no banner to hide, and no TTY gate.
 
 | Piece | Role |
 | --- | --- |
-| `grok-build-jev hook` | Read the PreToolUse event. Spawn `jev-router`. Map the GateVerdict with `pretoolHookDecision`. |
-| `jev-router` | The only TypeSafe client. Stamps `pretool.policyId`, permission, catalog, and `calls`. |
+| `grok-build-jev hook` | Execs `jev-router hook`, which reads the PreToolUse event and maps the GateVerdict with `pretool_hook_decision`. |
+| `jev-router` | The only place a live transport is built (`cli.rs`, off in this release). Stamps `pretool.policyId`, permission, catalog, and `calls`. |
 | `grok-build-jev catalog` / `schema` | Tiny index, then one schema on demand. A schema dump is not a typed call and not an allow. |
 | `grok-build-jev config` | One `PreToolUse` group. `matcher` is `PRETOOL_MATCHER`. |
 
@@ -77,7 +77,7 @@ deny.
 No key and no network:
 
 ```sh
-node packages/jev-router/harness.mjs smoke
+nix run .#grok-build-jev -- smoke
 ```
 
 From a built package:

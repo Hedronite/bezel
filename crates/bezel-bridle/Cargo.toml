@@ -4,7 +4,7 @@ version = "0.2.1"
 edition = "2021"
 description = "Bridle for a coding harness. Not the harness. Not the crates.io crate `bezel`."
 license = "MIT"
-repository = "https://github.com/VirtualMachinist/bezel"
+repository = "https://github.com/Hedronite/bezel"
 readme = "README.md"
 keywords = ["harness", "bridle"]
 

@@ -1,4 +1,4 @@
-//! Oracle: harness. Every behavior `packages/jev-router/test.mjs` asserts for
+//! Oracle: harness. Every behavior the removed `packages/jev-router/test.mjs` asserts (git `57352ac^`) for
 //! the PreToolUse adapter — modes, hook events, hook decisions, the bypass
 //! predicate, and stdin/stdout behavior — against the shipped crate.
 
@@ -89,7 +89,7 @@ fn pretool_stamp_maps_classes_and_policy_ids() {
     assert!(!unmatched.matched);
     assert_eq!(unmatched.class_id, None);
 
-    // match_pretool_class holds for every mapped token in test.mjs.
+    // match_pretool_class holds for every mapped token in the removed test.mjs.
     for name in [
         "web_search", "WebSearch", "web_fetch", "WebFetch",
         "spawn_subagent", "Task", "Bash", "run_terminal_command", "run_terminal_cmd",

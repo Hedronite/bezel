@@ -29,7 +29,7 @@ const POLICY_ID: &str = "omapi-route-workflow-policy@1";
 const POLICY_JCS: &str = r#"{"policy":{"tool_call":{"allow":["read","write","filesystem","network","external"],"deny":["payment"]},"tool_expose":{"allow":["read","write","filesystem","network","external"]}},"policy_version":"1"}"#;
 
 /// Shared fixture: one read tool, no key. Shadow, not allow.
-/// The JSON matches `decideTypedCalls` in `calls.mjs`.
+/// The JSON matches `decideTypedCalls` in the removed `calls.mjs` (git `57352ac^`).
 pub fn missing_key_envelope() -> String {
     let document = "interface Mcp\nfn list_issues effect=read";
     let document_hash = sha256_prefixed(document);

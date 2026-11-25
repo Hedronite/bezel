@@ -35,6 +35,7 @@ stdenv.mkDerivation {
     mkdir -p "$work/crates/bezel-bridle" "$work/packages/jev-router" "$work/docs" "$work/.agents/skills"
     cp ${repoRoot}/crates/bezel-bridle/Cargo.toml ${repoRoot}/crates/bezel-bridle/Cargo.lock "$work/crates/bezel-bridle/"
     cp -r ${repoRoot}/crates/bezel-bridle/src "$work/crates/bezel-bridle/src"
+    cp -r ${repoRoot}/crates/bezel-bridle/tests "$work/crates/bezel-bridle/tests"
     cp -r ${repoRoot}/packages/jev-router/testdata "$work/packages/jev-router/testdata"
     cp ${repoRoot}/docs/POLICY-MAP.md "$work/docs/POLICY-MAP.md"
     cp ${repoRoot}/packages/cursor-agent-jev.nix "$work/packages/cursor-agent-jev.nix"

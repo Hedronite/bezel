@@ -9,7 +9,7 @@ Bezel is not a harness. It is the bridle on one: the piece that sits on Grok, om
 
 ## What you are holding
 
-`LAWS.bend` states invariants. `PROOF.bend` checks them once the Rust modules exist. The JavaScript prototype at `v0.1.0` is the oracle, not the thing Bend proves.
+`LAWS.bend` states invariants. `PROOF.bend` checks the Rust implementation. The Rust oracle tests in this repo are the reference; the JavaScript prototype was removed at parity (git `57352ac^`).
 
 Draft these four laws. Do not invent a second runtime.
 
@@ -24,7 +24,7 @@ The harness loads this skill from the Bezel pack. Bezel does not replace the har
 
 ## Do not
 
-- Treat this skill as permission to delete the JavaScript before parity
+- Reintroduce the removed JavaScript prototype alongside the Rust oracle tests
 - Link `@typesafe-ai/sdk` from Rust
 - Publish the crate `bezel`
 - Flip the live PreToolUse matcher

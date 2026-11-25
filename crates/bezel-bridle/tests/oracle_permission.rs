@@ -1,4 +1,4 @@
-//! Oracle: permission. Every behavior `packages/jev-router/test.mjs` asserts
+//! Oracle: permission. Every behavior the removed `packages/jev-router/test.mjs` asserts (git `57352ac^`)
 //! for `decidePermission`, `applyPermissionVerdict`, `permissionFromHook`,
 //! surfaces, and the pretool hook, asserted against the shipped crate.
 
@@ -137,7 +137,7 @@ fn key_absent_forces_shadow_even_when_active_was_requested() {
 }
 
 #[test]
-fn unknown_classes_are_null_like_permission_mjs() {
+fn unknown_classes_are_null_like_recorded_permission_oracle() {
     assert!(decide_permission(&input(
         "read_file", "active", true, None, 0.0, 0.0, 0.0, 0.0, "", "", None, "", "", false,
     ))

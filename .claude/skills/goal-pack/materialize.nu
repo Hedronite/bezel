@@ -104,6 +104,47 @@ def is-safe-relpath [rel: string] {
   not ($parts | any {|p| ($p == "") or ($p == ".") or ($p == "..") })
 }
 
+# Find a hub at the flat or uppercase path for a product/slug, then read its
+# frontmatter status. Returns [] when no hub exists.
+def hub_status [root: string, product: string, slug: string] {
+  let lower = $"($root)/foundry/($product)/($slug).md"
+  let upper = $"($root)/foundry/($product)/($slug | str uppercase).md"
+  let hub = if ($lower | path exists) { $lower } else if ($upper | path exists) { $upper } else { "" }
+  if $hub == "" { return [] }
+  let text = (try { open --raw $hub } catch { "" })
+  if not ($text | str starts-with "---") { return ["missing"] }
+  let lines = ($text | lines)
+  let end = ($lines | enumerate | skip 1 | where {|x| ($x.item | str trim) == "---"} | get index? | first | default null)
+  if $end == null { return ["missing"] }
+  let fm = ($lines | skip 1 | take ($end - 1))
+  let row = ($fm | where {|l| $l =~ '^status:\s*' } | first | default "")
+  if $row == "" { return ["missing"] }
+  let val = ($row | str replace -r '^status:\s*' "" | str trim | str trim -c '"' | str trim -c "'")
+  [ $val ]
+}
+
+def inside_schema [path: string, schema_root: string] {
+  let p = ($path | path expand | str trim -r -c "/")
+  let s = ($schema_root | path expand | str trim -r -c "/")
+  $p == $s or ($p | str starts-with $"($s)/")
+}
+
+def nearest_existing [p: string] {
+  mut cur = $p
+  while not ($cur | path exists) {
+    let parent = ($cur | path dirname)
+    if $parent == $cur { return $cur }
+    $cur = $parent
+  }
+  $cur
+}
+
+def dir_writable [p: string] {
+  let d = (nearest_existing $p)
+  let r = (^test -w $d | complete)
+  $r.exit_code == 0
+}
+
 def main [
   ncl_file: string
   --vault: string = ""
@@ -121,16 +162,44 @@ def main [
     fail "materialize" 2 "missing --vault <dir> (or pass --dry-run)"
     return
   }
+  let root = if $vault == "" { "" } else { $vault | path expand | str trim -r -c "/" }
   let nk = (resolve-nickel $nickel)
 
-  # 1. Evaluate Nickel pack -> JSON
+  # 1. Evaluate Nickel pack -> JSON. With --facts, a temporary wrapper
+  # outside the vault re-renders the exported law record with live facts.
   let tn0 = (date now)
+  mut wrapper_dir = ""
+  let eval_file = if $facts != "" {
+    if not ($facts | path exists) {
+      fail "materialize" 2 $"facts file not found: ($facts)"
+      return
+    }
+    let fdoc = (try { open --raw $facts | from json } catch { null })
+    if $fdoc == null {
+      fail "materialize" 2 $"invalid JSON in facts file: ($facts)"
+      return
+    }
+    let d = (^mktemp -d | complete)
+    if $d.exit_code != 0 {
+      fail "materialize" 2 $"failed to create facts wrapper dir: ($d.stderr | str trim)"
+      return
+    }
+    $wrapper_dir = ($d.stdout | str trim)
+    let w = $"($wrapper_dir)/with-facts.ncl"
+    let base = ($ncl_file | path expand | to json)
+    let facts_path = ($facts | path expand | to json)
+    ("let base = import " + $base + " in\n" + "{ out = base.with_facts (import " + $facts_path + ") }\n") | save -f $w
+    $w
+  } else {
+    $ncl_file
+  }
   let res = (try {
-    ^$nk export --format json --error-format json $ncl_file | complete
+    ^$nk export --format json --error-format json $eval_file | complete
   } catch {|e|
     let why = ($e.msg? | default "failed to invoke nickel")
     { exit_code: 127, stdout: "", stderr: $"nickel: ($why)" }
   })
+  if $wrapper_dir != "" { rm -rf $wrapper_dir }
   let nickel_ms = (((date now) - $tn0) / 1ms | math round -p 1)
 
   if $res.exit_code == 127 {
@@ -156,7 +225,8 @@ def main [
     return
   }
 
-  let exp = (try { $res.stdout | from json } catch { null })
+  let exported = (try { $res.stdout | from json } catch { null })
+  let exp = if $facts != "" { $exported | get -o out } else { $exported }
   if $exp == null or (($exp | describe) | str starts-with "record") == false {
     fail "materialize" 2 "nickel export did not produce a JSON object"
     return
@@ -199,6 +269,44 @@ def main [
       blame: null
     } null
     return
+  }
+
+  # B2: an input pack inside schema/<product>/<slug> would be destroyed when
+  # --force replaces that directory. Refuse before any write.
+  if (not $dry_run) and $force and $root != "" {
+    let input = if ($ncl_file | str starts-with "/") { $ncl_file } else { (pwd) + "/" + $ncl_file }
+    let schema_root = $"($root)/foundry/($product)/schema/($slug)"
+    if (inside_schema $input $schema_root) {
+      let total_ms = (((date now) - $t0) / 1ms | math round -p 1)
+      emit true "materialize" 2 {
+        passed: false
+        stage: "path"
+        nickel_ms: $nickel_ms
+        total_ms: $total_ms
+        violation_count: 1
+        violations: [{ code: "PATH_UNSAFE", detail: $"input pack '($ncl_file)' resolves inside ($schema_root)" }]
+        blame: null
+      } null
+      return
+    }
+  }
+
+  # B1: never overwrite a pack once the hub leaves awaiting-approval.
+  if (not $dry_run) and $force and $root != "" {
+    let statuses = (hub_status $root $product $slug)
+    if not ($statuses | is-empty) and (($statuses | first) != "awaiting-approval") {
+      let total_ms = (((date now) - $t0) / 1ms | math round -p 1)
+      emit true "materialize" 2 {
+        passed: false
+        stage: "hub"
+        nickel_ms: $nickel_ms
+        total_ms: $total_ms
+        violation_count: 1
+        violations: [{ code: "PACK_LOCKED", detail: $"existing hub status is '($statuses | first)'; only awaiting-approval may be regenerated" }]
+        blame: null
+      } null
+      return
+    }
   }
 
   # 2. Live seat verification against facts.json (G_OWNER_UNKNOWN)
@@ -278,6 +386,32 @@ def main [
     }
   }
 
+  let schema_prefix = $"foundry/($product)/schema/($slug)/"
+  let schema_dir = $"($root)/foundry/($product)/schema/($slug)"
+  let generated_schema = ($files | each {|f| $f.path } | where {|p| $p | str starts-with $schema_prefix } | each {|p| $p | str replace $schema_prefix ""})
+  if (not $dry_run) and $force and $root != "" and ($schema_dir | path exists) {
+    let existing = (^find $schema_dir -mindepth 1 -print | lines | each {|p| $p | path relative-to $schema_dir })
+    for rel in $existing {
+      if $rel not-in $generated_schema {
+        $pre_violations = ($pre_violations | append { code: "PATH_UNSAFE", detail: $"schema directory contains a non-generated entry: ($rel)" })
+      }
+    }
+  }
+  if (not $dry_run) and $root != "" {
+    mut target_dirs = []
+    for f in $to_write {
+      $target_dirs = ($target_dirs | append ($root | path join ($f.path | path dirname)))
+    }
+    if not ($generated_schema | is-empty) {
+      $target_dirs = ($target_dirs | append $"($root)/foundry/($product)/schema")
+    }
+    $target_dirs = ($target_dirs | uniq)
+    for d in $target_dirs {
+      if not (dir_writable $d) {
+        $pre_violations = ($pre_violations | append { code: "PATH_UNSAFE", detail: $"target directory is not writable: ($d)" })
+      }
+    }
+  }
   if not ($pre_violations | is-empty) {
     let total_ms = (((date now) - $t0) / 1ms | math round -p 1)
     emit true "materialize" 2 {
@@ -296,12 +430,19 @@ def main [
   mut written_paths = []
   if not $dry_run {
     mkdir $root
-    let mk = (^mktemp -d $"($root)/.proto-stage.XXXXXX" | complete)
+    let stage_parent = ($root | path dirname)
+    let mk = (^mktemp -d $"($stage_parent)/.proto-stage.XXXXXX" | complete)
     if $mk.exit_code != 0 {
       fail "materialize" 2 $"failed to create staging dir: ($mk.stderr | str trim)"
       return
     }
     let stage = ($mk.stdout | str trim)
+    let backup = $"($stage)/backup"
+    let dst_schema_dir = $"($root)/foundry/($product)/schema/($slug)"
+    let schema_existed = ($dst_schema_dir | path exists)
+    let planned_paths = ($to_write | each {|f| $f.path })
+    let pre_existing = ($planned_paths | where {|rel| ($"($root)/($rel)" | path exists) })
+    try {
     let schema_prefix = $"foundry/($product)/schema/($slug)/"
     mut schema_files = []
     mut other_files = []
@@ -319,12 +460,12 @@ def main [
       }
     }
 
-    # Commit schema/<slug>/ as one directory rename when present
+    # Commit schema/<slug>/ as one directory rename when present. The old
+    # directory is moved into backup/ first, never deleted, so a later
+    # failure can restore it.
     if not ($schema_files | is-empty) {
       let st_schema_dir = $"($stage)/foundry/($product)/schema/($slug)"
       let dst_schema_parent = $"($root)/foundry/($product)/schema"
-      let dst_schema_dir = $"($dst_schema_parent)/($slug)"
-      # Defence in depth: assert exact rm -rf target before any destructive delete.
       if (not (is-valid-ident $product)) or (not (is-valid-ident $slug)) or ($dst_schema_dir != $"($root)/foundry/($product)/schema/($slug)") or (($dst_schema_dir | path dirname) != $dst_schema_parent) or (($dst_schema_dir | path basename) != $slug) {
         rm -rf $stage
         emit true "materialize" 2 {
@@ -338,21 +479,51 @@ def main [
       }
       mkdir $dst_schema_parent
       if $force and ($dst_schema_dir | path exists) {
-        rm -rf $dst_schema_dir
+        mkdir $backup
+        ^mv $dst_schema_dir $"($backup)/schema"
       }
       ^mv $st_schema_dir $dst_schema_dir
       $written_paths = ($written_paths | append $schema_files)
     }
 
-    # Commit remaining files via same-filesystem atomic rename
+    # Commit remaining files via same-filesystem atomic rename. Existing
+    # files are moved into backup/ first.
     for rel in $other_files {
       let st_src = $"($stage)/($rel)"
       let dst = $"($root)/($rel)"
       mkdir ($dst | path dirname)
+      if $force and ($dst | path exists) {
+        let bdst = $"($backup)/files/($rel)"
+        mkdir ($bdst | path dirname)
+        ^mv -f $dst $bdst
+      }
       ^mv -f $st_src $dst
       $written_paths = ($written_paths | append $rel)
     }
 
+    } catch {|e|
+      # Restore every planned file from backup; remove a file that was new.
+      for rel in $planned_paths {
+        let dst = $"($root)/($rel)"
+        let bdst = $"($backup)/files/($rel)"
+        if ($bdst | path exists) {
+          if ($dst | path exists) { rm -f $dst }
+          mkdir ($dst | path dirname)
+          ^mv -f $bdst $dst
+        } else if ($rel not-in $pre_existing) and ($dst | path exists) {
+          rm -f $dst
+        }
+      }
+      if ($"($backup)/schema" | path exists) {
+        if ($dst_schema_dir | path exists) { rm -rf $dst_schema_dir }
+        ^mv $"($backup)/schema" $dst_schema_dir
+      } else if (not $schema_existed) and ($dst_schema_dir | path exists) {
+        rm -rf $dst_schema_dir
+      }
+      rm -rf $stage
+      fail "materialize" 2 $"staging failed and was rolled back: ($e.msg)"
+      return
+    }
     rm -rf $stage
   } else {
     $written_paths = ($to_write | each {|f| $f.path })

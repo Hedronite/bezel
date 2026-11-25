@@ -1,4 +1,4 @@
-//! Oracle: typed calls. Every behavior `packages/jev-router/test.mjs` asserts
+//! Oracle: typed calls. Every behavior the removed `packages/jev-router/test.mjs` asserts (git `57352ac^`)
 //! for `decideTypedCalls`, `callsBypass`, the effect guard, and the facet
 //! envelope, asserted against the shipped crate's public API.
 
@@ -31,7 +31,7 @@ fn missing_key_envelope_is_byte_identical_to_the_node_fixture() {
     assert_eq!(body.as_bytes(), recorded.as_slice());
     let text = String::from_utf8(recorded).unwrap();
     assert!(envelope_matches(&body, &text));
-    // Behaviors test.mjs asserts on the shadow, missing-key decision.
+    // Behaviors the removed test.mjs asserts on the shadow, missing-key decision.
     assert!(body.contains("\"transport\":\"facet\""));
     assert!(body.contains("\"facetVersion\":\"2.1.3\""));
     assert!(body.contains("\"policyId\":\"omapi-route-workflow-policy@1\""));

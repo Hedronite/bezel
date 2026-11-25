@@ -278,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn g1_permission_surface_matches_permission_mjs() {
+    fn g1_permission_surface_matches_recorded_oracle() {
         let src = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/permission.rs"))
             .unwrap();
         assert!(!src.contains("JEV_MODE"));
@@ -1244,7 +1244,7 @@ mod tests {
     }
 
     #[test]
-    fn g1_missing_key_envelope_matches_calls_mjs() {
+    fn g1_missing_key_envelope_matches_recorded_oracle() {
         let body = missing_key_envelope();
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../packages/jev-router/testdata/calls/missing-key.json");
@@ -1278,7 +1278,7 @@ mod tests {
     }
 
     #[test]
-    fn g2_hard_stops_match_calls_mjs_and_are_not_promoted() {
+    fn g2_hard_stops_match_recorded_oracle_and_are_not_promoted() {
         let next = HardStopTool {
             name: "linear__list_issues",
             description: "List issues",
@@ -1544,7 +1544,7 @@ mod tests {
     }
 
     #[test]
-    fn g1_gather_matches_facts_mjs_on_the_same_fixtures() {
+    fn g1_gather_matches_recorded_oracle_on_the_same_fixtures() {
         assert_eq!(clip_to_max_hunk_chars("abc", Some(2)), "ab");
         assert_eq!(MAX_HUNK_CHARS, 4000);
 

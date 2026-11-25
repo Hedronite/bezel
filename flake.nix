@@ -429,6 +429,7 @@
             mkdir -p "$work/crates/bezel-bridle" "$work/packages" "$work/docs" "$work/.agents/skills"
             cp ${./crates/bezel-bridle}/Cargo.toml ${./crates/bezel-bridle}/Cargo.lock "$work/crates/bezel-bridle/"
             cp -r ${./crates/bezel-bridle}/src "$work/crates/bezel-bridle/src"
+            cp -r ${./crates/bezel-bridle}/tests "$work/crates/bezel-bridle/tests"
             cp -r ${./packages/jev-router} "$work/packages/jev-router"
             cp ${./docs/POLICY-MAP.md} "$work/docs/POLICY-MAP.md"
             cp ${./packages/cursor-agent-jev.nix} "$work/packages/cursor-agent-jev.nix"

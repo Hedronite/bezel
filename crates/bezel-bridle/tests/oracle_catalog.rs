@@ -1,4 +1,4 @@
-//! Oracle: catalog. Every behavior `packages/jev-router/test.mjs` asserts for
+//! Oracle: catalog. Every behavior the removed `packages/jev-router/test.mjs` asserts (git `57352ac^`) for
 //! the tiny catalog, the schema dump, and the check/offline oracle, asserted
 //! against the shipped crate's public API.
 

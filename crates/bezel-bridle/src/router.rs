@@ -1,4 +1,4 @@
-//! No-key router JSON for the Bash fixture. Matches `jev-router.mjs`.
+//! No-key router JSON for the Bash fixture. Matches the removed `jev-router.mjs` (git `57352ac^`).
 //! Active missing-key is escalate / hold on the loop-stop policy, not `jev uncertain`.
 
 use crate::catalog::tiny_catalog_json;

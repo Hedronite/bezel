@@ -42,7 +42,8 @@ nu materialize.nu pack.ncl --vault <dir> [--facts facts.json] [--force] [--dry-r
   `awaiting-approval`, including a missing or unparseable status. Nothing is
   written and `schema/<slug>/` is untouched.
 - `--force` refuses with `PATH_UNSAFE` when the input `pack.ncl` resolves
-  inside `<vault>/foundry/<product>/schema/<slug>`; keep intent files at
+  inside `<vault>/foundry/<product>/schema/<slug>`, or when that directory
+  holds anything beyond the four generated schema files; keep intent files at
   `foundry/<product>/intent/<slug>.ncl`, never under `schema/<slug>/`.
 - `--facts facts.json` verifies roles and renders live seats. The GOAL fence
   `SEATS` line and `schema/<slug>/goal.instance.json` `squad` carry real
@@ -179,8 +180,9 @@ note in `NICKEL_ERROR.detail`.
   before touching any bytes.
 - Intent files live at `foundry/<product>/intent/<slug>.ncl`; an input pack
   under `schema/<slug>/` is refused with `PATH_UNSAFE`.
-- Staging happens in a sibling temp directory outside the vault root and is
-  removed on success or failure, so no staging directory appears inside the
-  vault.
+- Staging happens in a sibling temp directory outside the vault root. Existing
+  pack files and `schema/<slug>/` move into a backup there before swapping, and
+  any mid-move failure restores them byte-for-byte; success or failure removes
+  the staging directory.
 - Identity is checked twice: contracts in `law.ncl`, and an independent check
   in `materialize.nu` (`IDENT_INVALID`) that does not trust the law.

@@ -129,6 +129,22 @@ def inside_schema [path: string, schema_root: string] {
   $p == $s or ($p | str starts-with $"($s)/")
 }
 
+def nearest_existing [p: string] {
+  mut cur = $p
+  while not ($cur | path exists) {
+    let parent = ($cur | path dirname)
+    if $parent == $cur { return $cur }
+    $cur = $parent
+  }
+  $cur
+}
+
+def dir_writable [p: string] {
+  let d = (nearest_existing $p)
+  let r = (^test -w $d | complete)
+  $r.exit_code == 0
+}
+
 def main [
   ncl_file: string
   --vault: string = ""
@@ -268,7 +284,7 @@ def main [
         nickel_ms: $nickel_ms
         total_ms: $total_ms
         violation_count: 1
-        violations: [{ code: "PATH_UNSAFE", detail: $"input pack ('($ncl_file)') resolves inside ($schema_root)" }]
+        violations: [{ code: "PATH_UNSAFE", detail: $"input pack '($ncl_file)' resolves inside ($schema_root)" }]
         blame: null
       } null
       return
@@ -370,6 +386,32 @@ def main [
     }
   }
 
+  let schema_prefix = $"foundry/($product)/schema/($slug)/"
+  let schema_dir = $"($root)/foundry/($product)/schema/($slug)"
+  let generated_schema = ($files | each {|f| $f.path } | where {|p| $p | str starts-with $schema_prefix } | each {|p| $p | str replace $schema_prefix ""})
+  if (not $dry_run) and $force and $root != "" and ($schema_dir | path exists) {
+    let existing = (^find $schema_dir -mindepth 1 -print | lines | each {|p| $p | path relative-to $schema_dir })
+    for rel in $existing {
+      if $rel not-in $generated_schema {
+        $pre_violations = ($pre_violations | append { code: "PATH_UNSAFE", detail: $"schema directory contains a non-generated entry: ($rel)" })
+      }
+    }
+  }
+  if (not $dry_run) and $root != "" {
+    mut target_dirs = []
+    for f in $to_write {
+      $target_dirs = ($target_dirs | append ($root | path join ($f.path | path dirname)))
+    }
+    if not ($generated_schema | is-empty) {
+      $target_dirs = ($target_dirs | append $"($root)/foundry/($product)/schema")
+    }
+    $target_dirs = ($target_dirs | uniq)
+    for d in $target_dirs {
+      if not (dir_writable $d) {
+        $pre_violations = ($pre_violations | append { code: "PATH_UNSAFE", detail: $"target directory is not writable: ($d)" })
+      }
+    }
+  }
   if not ($pre_violations | is-empty) {
     let total_ms = (((date now) - $t0) / 1ms | math round -p 1)
     emit true "materialize" 2 {
@@ -395,6 +437,11 @@ def main [
       return
     }
     let stage = ($mk.stdout | str trim)
+    let backup = $"($stage)/backup"
+    let dst_schema_dir = $"($root)/foundry/($product)/schema/($slug)"
+    let schema_existed = ($dst_schema_dir | path exists)
+    let planned_paths = ($to_write | each {|f| $f.path })
+    let pre_existing = ($planned_paths | where {|rel| ($"($root)/($rel)" | path exists) })
     try {
     let schema_prefix = $"foundry/($product)/schema/($slug)/"
     mut schema_files = []
@@ -413,12 +460,12 @@ def main [
       }
     }
 
-    # Commit schema/<slug>/ as one directory rename when present
+    # Commit schema/<slug>/ as one directory rename when present. The old
+    # directory is moved into backup/ first, never deleted, so a later
+    # failure can restore it.
     if not ($schema_files | is-empty) {
       let st_schema_dir = $"($stage)/foundry/($product)/schema/($slug)"
       let dst_schema_parent = $"($root)/foundry/($product)/schema"
-      let dst_schema_dir = $"($dst_schema_parent)/($slug)"
-      # Defence in depth: assert exact rm -rf target before any destructive delete.
       if (not (is-valid-ident $product)) or (not (is-valid-ident $slug)) or ($dst_schema_dir != $"($root)/foundry/($product)/schema/($slug)") or (($dst_schema_dir | path dirname) != $dst_schema_parent) or (($dst_schema_dir | path basename) != $slug) {
         rm -rf $stage
         emit true "materialize" 2 {
@@ -432,24 +479,49 @@ def main [
       }
       mkdir $dst_schema_parent
       if $force and ($dst_schema_dir | path exists) {
-        rm -rf $dst_schema_dir
+        mkdir $backup
+        ^mv $dst_schema_dir $"($backup)/schema"
       }
       ^mv $st_schema_dir $dst_schema_dir
       $written_paths = ($written_paths | append $schema_files)
     }
 
-    # Commit remaining files via same-filesystem atomic rename
+    # Commit remaining files via same-filesystem atomic rename. Existing
+    # files are moved into backup/ first.
     for rel in $other_files {
       let st_src = $"($stage)/($rel)"
       let dst = $"($root)/($rel)"
       mkdir ($dst | path dirname)
+      if $force and ($dst | path exists) {
+        let bdst = $"($backup)/files/($rel)"
+        mkdir ($bdst | path dirname)
+        ^mv -f $dst $bdst
+      }
       ^mv -f $st_src $dst
       $written_paths = ($written_paths | append $rel)
     }
 
     } catch {|e|
+      # Restore every planned file from backup; remove a file that was new.
+      for rel in $planned_paths {
+        let dst = $"($root)/($rel)"
+        let bdst = $"($backup)/files/($rel)"
+        if ($bdst | path exists) {
+          if ($dst | path exists) { rm -f $dst }
+          mkdir ($dst | path dirname)
+          ^mv -f $bdst $dst
+        } else if ($rel not-in $pre_existing) and ($dst | path exists) {
+          rm -f $dst
+        }
+      }
+      if ($"($backup)/schema" | path exists) {
+        if ($dst_schema_dir | path exists) { rm -rf $dst_schema_dir }
+        ^mv $"($backup)/schema" $dst_schema_dir
+      } else if (not $schema_existed) and ($dst_schema_dir | path exists) {
+        rm -rf $dst_schema_dir
+      }
       rm -rf $stage
-      fail "materialize" 2 $"staging failed: ($e.msg)"
+      fail "materialize" 2 $"staging failed and was rolled back: ($e.msg)"
       return
     }
     rm -rf $stage

@@ -93,11 +93,29 @@ let PackValid = std.contract.custom (fun _label v =>
           else [])
         (std.array.range 0 n))
     (std.array.range 0 n) in
+  let seat_texts = fun s => present [
+    (if std.record.has_field "role" s then s.role else null),
+    (if std.record.has_field "pane_id" s then s.pane_id else null),
+    (if std.record.has_field "tab_id" s then s.tab_id else null),
+    (if std.record.has_field "harness" s then s.harness else null),
+    (if std.record.has_field "model" s then s.model else null),
+    (if std.record.has_field "seat_label" s then s.seat_label else null),
+    (if std.record.has_field "workspace" s then s.workspace else null),
+    (if std.record.has_field "captured" s then s.captured else null),
+  ] in
+  let bad_text = fun x => std.typeof x == 'String && (
+    std.string.contains "\n" x || std.string.contains "\r" x ||
+    std.string.contains "```" x || std.string.contains "[[" x) in
+  let raw_facts = [v.facts.occupancy, v.facts.workspace, v.facts.captured]
+    @ std.array.flat_map seat_texts v.facts.seats in
+  let bad_facts = std.array.filter bad_text raw_facts in
   let vs = present [
       (if len fence > v.fence_max
        then "FENCE_OVER_CAP: goal fence is %{num (len fence)} chars (cap %{num v.fence_max})" else null),
       (if std.string.is_match "^[\\x00-\\x7F]*$" fence then null
        else "FENCE_NON_ASCII: goal fence holds a non-ASCII character"),
+      (if std.array.length bad_facts == 0 then null
+       else "FACTS_INVALID: seat or recon text contains a newline, triple backtick, or wikilink opener"),
     ]
     @ std.array.flat_map
         (fun p => if std.string.contains (std.string.lowercase p) lower
@@ -161,19 +179,27 @@ let PackValid = std.contract.custom (fun _label v =>
   # wrapper. The default keeps intents without facts byte-identical.
   facts | {
     occupancy | String | default = "unverified",
-    seats | Array {
-      role | Ident,
-      pane_id | String | default = "",
-      tab_id | String | default = "",
-      harness | String | default = "",
-      model | String | default = "",
-      writes | Bool | default = true,
-      idle_is_fail | Bool | default = true,
-    } | default = [],
-  } | default = { occupancy = "unverified", seats = [] },
+    workspace | String | default = "",
+    captured | String | default = "",
+    seats | Array Dyn | default = [],
+  } | default = { occupancy = "unverified", workspace = "", captured = "", seats = [] },
 
   # ---------- derived ----------
   writers = uniq (std.array.map (fun s => s.role) steps),
+  facts_norm = fun f => {
+    occupancy = if std.record.has_field "occupancy" f then f.occupancy else "unverified",
+    workspace = if std.record.has_field "workspace" f then f.workspace else "",
+    captured = if std.record.has_field "captured" f then f.captured else "",
+    seats = if std.record.has_field "seats" f then f.seats else [],
+  },
+  active_seats = fun f =>
+    let nf = facts_norm f in
+    std.array.filter (fun s =>
+      std.record.has_field "role" s && std.array.elem s.role roles) nf.seats,
+  seat_writes = fun s =>
+    if std.record.has_field "writes" s then s.writes else std.array.elem s.role writers,
+  seat_idle = fun s =>
+    if std.record.has_field "idle_is_fail" s then s.idle_is_fail else true,
   forbidden_all = uniq (forbidden @ org_forbidden @ pack_forbidden),
   p_rel = "foundry/%{product}",
   hub_stem = if hub_case == 'upper then std.string.uppercase slug else slug,
@@ -199,17 +225,18 @@ let PackValid = std.contract.custom (fun _label v =>
     let tab = if std.record.has_field "tab_id" s then s.tab_id else "" in
     let harness = if std.record.has_field "harness" s then s.harness else "" in
     let model = if std.record.has_field "model" s then s.model else "" in
-    let writes = if std.record.has_field "writes" s then s.writes else true in
-    let idle = if std.record.has_field "idle_is_fail" s then s.idle_is_fail else true in
+    let writes = seat_writes s in
+    let idle = seat_idle s in
     let loc = if pane != "" then pane else tab in
     let loc_s = if loc == "" then "" else " %{loc}" in
     let harness_s = if harness == "" then "" else " %{harness}" in
     let model_s = if model == "" then "" else " %{model}" in
     "%{s.role}%{loc_s}%{harness_s}%{model_s} writes=%{if writes then "yes" else "no"} idle=%{if idle then "fail" else "ok"}",
   seats_text_for = fun fx =>
-    if std.array.length fx.seats == 0
+    let active = active_seats fx in
+    if std.array.length active == 0
     then "%{join ", " roles}; idle is fail"
-    else join "; " (std.array.map seat_desc fx.seats),
+    else join "; " (std.array.map seat_desc active),
   seats_text = seats_text_for facts,
 
   fence_text_for = fun fx => join "\n" [
@@ -268,16 +295,18 @@ let PackValid = std.contract.custom (fun _label v =>
   # Record fields are recursive: `x = x` inside a record literal refers to itself,
   # so outer values are bound with `let` before they are copied into a literal.
   view_for = fun fx =>
-    let ft = fence_text_for fx in let fm = fence_max in let fp = forbidden_phrases in
+    let nf = facts_norm fx in
+    let ft = fence_text_for nf in let fm = fence_max in let fp = forbidden_phrases in
     let st = steps in let ro = roles in
-    { fence_text = ft, fence_max = fm, forbidden_phrases = fp, steps = st, roles = ro },
+    { fence_text = ft, fence_max = fm, forbidden_phrases = fp, steps = st, roles = ro, facts = nf },
   view = view_for facts,
 
   # ---------- the export (interface proto-ncl-pack/v0) ----------
   # `render_with_facts` lets materialize.nu re-render a pack after merging a
   # facts record, without changing the user's pack.ncl expression.
   render_with_facts = fun fx =>
-    let checked = view_for fx | PackValid in
+    let nf = facts_norm fx in
+    let checked = view_for nf | PackValid in
     let f = fun rel body => { path = "%{p_rel}/%{rel}", content = body, create_only = false } in
     let the_product = product in
     let the_slug = slug in
@@ -345,8 +374,9 @@ let PackValid = std.contract.custom (fun _label v =>
           status = the_status,
           wiki = wiki_vals,
           squad = {
-            recon = fx.occupancy, idle_is_fail = true,
-            seats = if std.array.length fx.seats == 0 then
+            recon = nf.occupancy, workspace = nf.workspace, captured = nf.captured,
+            idle_is_fail = true,
+            seats = if std.array.length (active_seats nf) == 0 then
               std.array.map (fun r => { role = r, writes = std.array.elem r writers, idle_is_fail = true }) roles
             else
               std.array.map (fun s => {
@@ -355,9 +385,9 @@ let PackValid = std.contract.custom (fun _label v =>
                 tab_id = if std.record.has_field "tab_id" s then s.tab_id else "",
                 harness = if std.record.has_field "harness" s then s.harness else "",
                 model = if std.record.has_field "model" s then s.model else "",
-                writes = if std.record.has_field "writes" s then s.writes else true,
-                idle_is_fail = if std.record.has_field "idle_is_fail" s then s.idle_is_fail else true,
-              }) fx.seats,
+                writes = seat_writes s,
+                idle_is_fail = seat_idle s,
+              }) (active_seats nf),
           },
           sequence = std.array.map (fun s => { step = s.id, ids = [s.id], owner = s.role, depends_on = s.depends_on }) steps,
           standing = std.array.map (fun r => r.id) the_standing,

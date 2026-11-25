@@ -1107,10 +1107,87 @@ cat >"$gp/vault-b2/foundry/demo/schema/m1/raw.ncl" <<'NCL'
 NCL
 run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/vault-b2/foundry/demo/schema/m1/raw.ncl" --vault "$gp/vault-b2" --force
 gp_check b2-schema-input "$work/out" 2 PATH_UNSAFE
+python3 - "$work/out" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+detail = next(v["detail"] for v in doc["data"]["violations"] if v["code"] == "PATH_UNSAFE")
+if "raw.ncl" not in detail or "($ncl_file)" in detail:
+    raise SystemExit(f"PATH_UNSAFE detail did not name the real input: {detail}")
+PY
 [[ ! -e "$gp/vault-b2/foundry/demo/GOAL-x.md" ]] || fail "goal-pack B2 wrote past the intent guard"
 
 [[ -z "$(find "$gp" -name '.proto-stage.*' -print -quit)" ]] \
   || fail "goal-pack left a staging directory inside or beside the vault"
+
+
+# BLK1: non-generated files under schema/<slug>/ refuse --force, including an
+# intent imported by a pack that lives outside the schema directory.
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack.ncl" --vault "$gp/vault-b2-extra" --facts "$gp/facts.json"
+gp_check b2-extra-initial "$work/out" 0
+printf 'notes\n' >"$gp/vault-b2-extra/foundry/demo/schema/m1/notes.md"
+cp "$gp/intent.ncl" "$gp/vault-b2-extra/foundry/demo/schema/m1/intent.ncl"
+printf '((import "./law.ncl") & (import "%s")).out\n' \
+  "$gp/vault-b2-extra/foundry/demo/schema/m1/intent.ncl" >"$gp/pack-b2-extra.ncl"
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack-b2-extra.ncl" --vault "$gp/vault-b2-extra" --facts "$gp/facts.json" --force
+gp_check b2-extra-nongenerated "$work/out" 2 PATH_UNSAFE
+[[ -f "$gp/vault-b2-extra/foundry/demo/schema/m1/intent.ncl" ]] \
+  || fail "goal-pack BLK1 deleted an imported intent"
+[[ -f "$gp/vault-b2-extra/foundry/demo/schema/m1/notes.md" ]] \
+  || fail "goal-pack BLK1 deleted notes.md"
+
+# N1: facts strings cannot close the fence or inject wikilinks.
+cat >"$gp/facts-bad.json" <<'JSON'
+{"occupancy":"live","seats":[{"role":"pm","harness":"h-b\n```\nINJECT","model":"m"}]}
+JSON
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack.ncl" --vault "$gp/vault-facts-bad" --facts "$gp/facts-bad.json"
+gp_check facts-injection "$work/out" 2 FACTS_INVALID
+[[ -z "$(ls -A "$gp/vault-facts-bad" 2>/dev/null)" ]] || fail "goal-pack N1 wrote after a bad facts string"
+
+# N2: optional occupancy, role filtering, and writes defaults.
+cat >"$gp/facts-n2.json" <<'JSON'
+{"seats":[{"role":"pm"},{"role":"backend"},{"role":"qa"},{"role":"tool","harness":"hidden"}]}
+JSON
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack.ncl" --vault "$gp/vault-facts-n2" --facts "$gp/facts-n2.json"
+gp_check facts-defaults "$work/out" 0
+python3 - "$gp/vault-facts-n2/foundry/demo" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+goal = (root / "GOAL-m1.md").read_text(encoding="utf-8")
+line = next((l for l in goal.splitlines() if l.startswith("SEATS:")), "")
+if "tool" in line:
+    raise SystemExit(f"undeclared role leaked into SEATS: {line}")
+if "pm writes=no" not in line or "backend writes=yes" not in line or "qa writes=yes" not in line:
+    raise SystemExit(f"facts writes defaults wrong: {line}")
+inst = json.loads((root / "schema/m1/goal.instance.json").read_text(encoding="utf-8"))
+if inst["squad"]["recon"] != "unverified":
+    raise SystemExit(f"missing occupancy did not fall back: {inst['squad']}")
+roles = [s["role"] for s in inst["squad"]["seats"]]
+if roles != ["pm", "backend", "qa"]:
+    raise SystemExit(f"undeclared role leaked into instance: {roles}")
+PY
+
+# BLK2: read-only product dir refuses before mutating a mixed pack.
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack.ncl" --vault "$gp/vault-atomic" --facts "$gp/facts.json"
+gp_check atomic-initial "$work/out" 0
+python3 - "$gp/vault-atomic/foundry/demo" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+goal = (p / "GOAL-m1.md").read_text(encoding="utf-8")
+checklist = (p / "CHECKLIST-m1.md").read_text(encoding="utf-8")
+assert "G0" in goal and "G1" in goal and "G2" not in goal
+assert "G0" in checklist and "G1" in checklist and "G2" not in checklist
+PY
+hash_before=$(find "$gp/vault-atomic/foundry/demo" -type f -exec sha256sum {} + | sort | sha256sum)
+chmod 555 "$gp/vault-atomic/foundry/demo"
+status=0
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack.ncl" --vault "$gp/vault-atomic" --facts "$gp/facts.json" --force || status=$?
+chmod 755 "$gp/vault-atomic/foundry/demo"
+[[ $status -eq 0 ]] || fail "goal-pack BLK2 driver failed with $status"
+gp_check atomic-readonly "$work/out" 2 PATH_UNSAFE
+hash_after=$(find "$gp/vault-atomic/foundry/demo" -type f -exec sha256sum {} + | sort | sha256sum)
+[[ "$hash_before" == "$hash_after" ]] || fail "goal-pack BLK2 mutated the pack before refusing"
+[[ -z "$(find "$gp" -name '.proto-stage.*' -print -quit)" ]] \
+  || fail "goal-pack BLK2 left a staging directory behind"
 
 # ---------- private-name hash guard (opt-in, hashed) ----------
 # Synthetic salt and terms only: the repository stores no real private names.

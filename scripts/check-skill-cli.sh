@@ -965,6 +965,153 @@ gp_check defense-out-of-product "$work/out" 2 PATH_UNSAFE
   || fail "goal-pack case 'defense-out-of-product' wrote outside the product"
 
 
+
+# ---------- goal-pack G2: locks, intent path, layout, ids, facts, staging ----------
+cat >"$gp/facts-live.json" <<'JSON'
+{"occupancy":"live","seats":[
+ {"role":"pm","pane_id":"pane-a","harness":"harness-a","model":"m1","writes":false,"idle_is_fail":true},
+ {"role":"backend","pane_id":"pane-b","harness":"harness-b","model":"m2","writes":true,"idle_is_fail":true},
+ {"role":"qa","pane_id":"pane-c","harness":"harness-c","model":"m3","writes":true,"idle_is_fail":true}
+]}
+JSON
+cat >"$gp/intent-nested.ncl" <<'NCL'
+{
+  product = "demo", slug = "m1", title = "export pipeline", date = "2026-11-22",
+  layout = 'nested,
+  roles = ["pm", "backend", "qa"],
+  review_body = "r", spec_body = "s",
+  steps = [
+    { id = "G0", title = "endpoint", role = "backend", paths = ["src/api"], pass = "p", fail = "f" },
+    { id = "G1", title = "matrix", role = "qa", paths = ["tests/e2e"], pass = "p", fail = "f", depends_on = ["G0"] },
+  ],
+}
+NCL
+printf '((import "./law.ncl") & (import "./intent-nested.ncl")).out\n' >"$gp/pack-nested.ncl"
+printf '((import "./law.ncl") & (import "./org-overlay.ncl") & (import "./intent.ncl") & { hub_case = '"'"'upper }).out\n' >"$gp/pack-upper.ncl"
+cat >"$gp/intent-bad-id.ncl" <<'NCL'
+{
+  product = "demo", slug = "m1", title = "bad id", date = "2026-11-22",
+  roles = ["pm"],
+  review_body = "r", spec_body = "s",
+  steps = [{ id = "P1", title = "bad", role = "pm", paths = ["src/bad"], pass = "p", fail = "f" }],
+}
+NCL
+printf '((import "./law.ncl") & (import "./intent-bad-id.ncl")).out\n' >"$gp/pack-bad-id.ncl"
+cat >"$gp/intent-g0a.ncl" <<'NCL'
+{
+  product = "demo", slug = "m1", title = "suffix id", date = "2026-11-22",
+  roles = ["pm"],
+  review_body = "r", spec_body = "s",
+  steps = [{ id = "G0a", title = "suffix", role = "pm", paths = ["src/a"], pass = "p", fail = "f" }],
+}
+NCL
+printf '((import "./law.ncl") & (import "./intent-g0a.ncl")).out\n' >"$gp/pack-g0a.ncl"
+
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack-bad-id.ncl" --vault "$gp/vault-bad-id"
+gp_check step-id-invalid "$work/out" 2 STEP_ID_INVALID
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack-g0a.ncl" --vault "$gp/vault-g0a"
+gp_check step-id-suffix "$work/out" 0
+
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack-nested.ncl" --vault "$gp/vault-nested" --facts "$gp/facts.json"
+gp_check nested-layout "$work/out" 0
+python3 - "$gp/vault-nested/foundry/demo" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+for rel in ["m1.md", "reviews/REVIEW-m1.md", "specs/SPEC-m1.md",
+            "checklists/CHECKLIST-m1.md", "rubrics/RUBRIC-m1.md", "goals/GOAL-m1.md",
+            "schema/m1/wiki.schema.json"]:
+    if not (root / rel).is_file():
+        raise SystemExit(f"nested layout missing {rel}")
+goal = (root / "goals/GOAL-m1.md").read_text(encoding="utf-8")
+for link in ["[[foundry/demo/reviews/REVIEW-m1]]", "[[foundry/demo/specs/SPEC-m1]]",
+             "[[foundry/demo/goals/GOAL-m1]]"]:
+    if link not in goal:
+        raise SystemExit(f"nested GOAL missing {link}")
+wiki = json.loads((root / "schema/m1/wiki.schema.json").read_text(encoding="utf-8"))
+if wiki["properties"]["review"]["const"] != "[[foundry/demo/reviews/REVIEW-m1]]":
+    raise SystemExit(wiki["properties"]["review"])
+if wiki["properties"]["goal"]["const"] != "[[foundry/demo/goals/GOAL-m1]]":
+    raise SystemExit(wiki["properties"]["goal"])
+PY
+
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack.ncl" --vault "$gp/vault-facts-live" --facts "$gp/facts-live.json"
+gp_check facts-live "$work/out" 0
+grep -q 'SEATS: pm pane-a harness-a m1 writes=no idle=fail; backend pane-b harness-b m2 writes=yes idle=fail; qa pane-c harness-c m3 writes=yes idle=fail.' \
+  "$gp/vault-facts-live/foundry/demo/GOAL-m1.md" \
+  || fail "live facts did not render in the GOAL fence"
+python3 - "$gp/vault-facts-live/foundry/demo/schema/m1/goal.instance.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+squad = doc["squad"]
+if squad["recon"] != "live" or len(squad["seats"]) != 3:
+    raise SystemExit(squad)
+if squad["seats"][1]["pane_id"] != "pane-b" or squad["seats"][1]["harness"] != "harness-b":
+    raise SystemExit(squad["seats"][1])
+PY
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack.ncl" --vault "$gp/vault-no-facts"
+gp_check facts-fallback "$work/out" 0
+python3 - "$gp/vault-no-facts/foundry/demo/schema/m1/goal.instance.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))["squad"]
+if doc["recon"] != "unverified" or doc["seats"][0]["role"] != "pm":
+    raise SystemExit(doc)
+PY
+
+# B1: locked hub statuses refuse --force, leave schema bytes untouched, and
+# awaiting-approval still permits a rewrite.
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack.ncl" --vault "$gp/vault-b1" --facts "$gp/facts.json"
+gp_check b1-initial "$work/out" 0
+hub="$gp/vault-b1/foundry/demo/m1.md"
+schema_hash=$(sha256sum "$gp/vault-b1/foundry/demo/schema/m1/goal.instance.json" | cut -d' ' -f1)
+for status in pinged execution-authorized done; do
+  python3 - "$hub" "$status" <<'PY'
+import re, sys
+p, status = sys.argv[1], sys.argv[2]
+text = open(p, encoding="utf-8").read()
+text = re.sub(r"^status: .*$", f"status: {status}", text, count=1, flags=re.M)
+open(p, "w", encoding="utf-8").write(text)
+PY
+  run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack.ncl" --vault "$gp/vault-b1" --facts "$gp/facts.json" --force
+  gp_check "b1-$status" "$work/out" 2 PACK_LOCKED
+  [[ "$(sha256sum "$gp/vault-b1/foundry/demo/schema/m1/goal.instance.json" | cut -d' ' -f1)" == "$schema_hash" ]] \
+    || fail "goal-pack B1 $status modified schema bytes"
+done
+printf -- '---\ntitle: "no status"\n---\n' >"$hub"
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack.ncl" --vault "$gp/vault-b1" --facts "$gp/facts.json" --force
+gp_check b1-missing-status "$work/out" 2 PACK_LOCKED
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack.ncl" --vault "$gp/vault-b1-ok" --facts "$gp/facts.json"
+gp_check b1-awaiting-initial "$work/out" 0
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack.ncl" --vault "$gp/vault-b1-ok" --facts "$gp/facts.json" --force
+gp_check b1-awaiting-allow "$work/out" 0
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack-upper.ncl" --vault "$gp/vault-b1-upper" --facts "$gp/facts.json"
+gp_check b1-upper-initial "$work/out" 0
+upper="$gp/vault-b1-upper/foundry/demo/M1.md"
+python3 - "$upper" <<'PY'
+import re, sys
+p = sys.argv[1]
+text = open(p, encoding="utf-8").read()
+text = re.sub(r"^status: .*$", "status: done", text, count=1, flags=re.M)
+open(p, "w", encoding="utf-8").write(text)
+PY
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/pack-upper.ncl" --vault "$gp/vault-b1-upper" --facts "$gp/facts.json" --force
+gp_check b1-upper-locked "$work/out" 2 PACK_LOCKED
+
+# B2: a pack that lives inside schema/<slug>/ is refused before any write.
+mkdir -p "$gp/vault-b2/foundry/demo/schema/m1"
+cat >"$gp/vault-b2/foundry/demo/schema/m1/raw.ncl" <<'NCL'
+{
+  interface = "proto-ncl-pack/v0", product = "demo", slug = "m1",
+  fence = { chars = 1, cap = 3800 }, roles = ["pm"], owners = [],
+  files = [{ path = "foundry/demo/GOAL-x.md", content = "x", create_only = false }],
+}
+NCL
+run "$work/out" "$skills/goal-pack/materialize.nu" "$gp/vault-b2/foundry/demo/schema/m1/raw.ncl" --vault "$gp/vault-b2" --force
+gp_check b2-schema-input "$work/out" 2 PATH_UNSAFE
+[[ ! -e "$gp/vault-b2/foundry/demo/GOAL-x.md" ]] || fail "goal-pack B2 wrote past the intent guard"
+
+[[ -z "$(find "$gp" -name '.proto-stage.*' -print -quit)" ]] \
+  || fail "goal-pack left a staging directory inside or beside the vault"
+
 # ---------- private-name hash guard (opt-in, hashed) ----------
 # Synthetic salt and terms only: the repository stores no real private names.
 guard=$script_dir/check-private-hashes.sh

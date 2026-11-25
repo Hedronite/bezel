@@ -77,6 +77,8 @@ let PackValid = std.contract.custom (fun _label v =>
   let ids = std.array.map (fun s => s.id) v.steps in
   let dup_ids = uniq (std.array.filter
     (fun i => std.array.length (std.array.filter (fun j => j == i) ids) > 1) ids) in
+  let bad_ids = uniq (std.array.filter
+    (fun i => !(std.string.is_match "^G[0-9]+[a-z]?$" i)) ids) in
   let undeclared = uniq (std.array.filter (fun r => !(std.array.elem r v.roles))
     (std.array.map (fun s => s.role) v.steps)) in
   let claims = std.array.flat_map
@@ -102,6 +104,7 @@ let PackValid = std.contract.custom (fun _label v =>
                   then ["FENCE_FORBIDDEN: goal fence contains '%{p}'"] else [])
         v.forbidden_phrases
     @ std.array.map (fun i => "STEP_ID_DUP: step id %{i} appears more than once") dup_ids
+    @ std.array.map (fun i => "STEP_ID_INVALID: step id '%{i}' does not match ^G[0-9]+[a-z]?$") bad_ids
     @ std.array.map (fun r => "OWNER_ROLE_UNDECLARED: role %{r} owns a step but is not in roles") undeclared
     @ overlaps in
   if vs == [] then 'Ok v
@@ -143,6 +146,7 @@ let PackValid = std.contract.custom (fun _label v =>
   build_rule | String | default = "build on the build host named in the SPEC; never on the cockpit host",
   merge_rule | String | default = "writers never merge; merge only after green CI and exact-head clear",
   date | String | default = "1970-01-01",
+  layout | [| 'flat, 'nested |] | default = 'flat,
   status | [| 'awaiting-approval, 'pinged, 'execution-authorized, 'done |] | default = 'awaiting-approval,
 
   # ---------- pack intent (no defaults: the pack must say these) ----------
@@ -153,26 +157,62 @@ let PackValid = std.contract.custom (fun _label v =>
   steps | Array Step,
   review_body | String,
   spec_body | String,
+  # Live seat facts, supplied by `materialize.nu --facts` through a temporary
+  # wrapper. The default keeps intents without facts byte-identical.
+  facts | {
+    occupancy | String | default = "unverified",
+    seats | Array {
+      role | Ident,
+      pane_id | String | default = "",
+      tab_id | String | default = "",
+      harness | String | default = "",
+      model | String | default = "",
+      writes | Bool | default = true,
+      idle_is_fail | Bool | default = true,
+    } | default = [],
+  } | default = { occupancy = "unverified", seats = [] },
 
   # ---------- derived ----------
   writers = uniq (std.array.map (fun s => s.role) steps),
   forbidden_all = uniq (forbidden @ org_forbidden @ pack_forbidden),
   p_rel = "foundry/%{product}",
   hub_stem = if hub_case == 'upper then std.string.uppercase slug else slug,
+  doc_rel = fun dir upper =>
+    let stem = "%{upper}-%{slug}" in
+    if layout == 'nested then "%{dir}/%{stem}" else "%{stem}",
+  link_rel = fun dir upper => "%{p_rel}/%{doc_rel dir upper}",
+  file_rel = fun dir upper => "%{doc_rel dir upper}.md",
   wl = {
     hub = "%{p_rel}/%{hub_stem}",
-    review = "%{p_rel}/REVIEW-%{slug}",
-    spec = "%{p_rel}/SPEC-%{slug}",
-    checklist = "%{p_rel}/CHECKLIST-%{slug}",
-    rubric = "%{p_rel}/RUBRIC-%{slug}",
-    goal = "%{p_rel}/GOAL-%{slug}",
+    review = link_rel "reviews" "REVIEW",
+    spec = link_rel "specs" "SPEC",
+    checklist = link_rel "checklists" "CHECKLIST",
+    rubric = link_rel "rubrics" "RUBRIC",
+    goal = link_rel "goals" "GOAL",
     status = "%{p_rel}/STATUS",
     goal_schema = "%{p_rel}/schema/%{slug}/goal.schema.json",
     goal_instance = "%{p_rel}/schema/%{slug}/goal.instance.json",
   },
   link = fun t => "[[%{t}]]",
+  seat_desc = fun s =>
+    let pane = if std.record.has_field "pane_id" s then s.pane_id else "" in
+    let tab = if std.record.has_field "tab_id" s then s.tab_id else "" in
+    let harness = if std.record.has_field "harness" s then s.harness else "" in
+    let model = if std.record.has_field "model" s then s.model else "" in
+    let writes = if std.record.has_field "writes" s then s.writes else true in
+    let idle = if std.record.has_field "idle_is_fail" s then s.idle_is_fail else true in
+    let loc = if pane != "" then pane else tab in
+    let loc_s = if loc == "" then "" else " %{loc}" in
+    let harness_s = if harness == "" then "" else " %{harness}" in
+    let model_s = if model == "" then "" else " %{model}" in
+    "%{s.role}%{loc_s}%{harness_s}%{model_s} writes=%{if writes then "yes" else "no"} idle=%{if idle then "fail" else "ok"}",
+  seats_text_for = fun fx =>
+    if std.array.length fx.seats == 0
+    then "%{join ", " roles}; idle is fail"
+    else join "; " (std.array.map seat_desc fx.seats),
+  seats_text = seats_text_for facts,
 
-  fence_text = join "\n" [
+  fence_text_for = fun fx => join "\n" [
     "You are PM looping %{product} %{slug}. You write no product code.",
     "",
     "Read after compact, in order: the product repo AGENTS.md, %{link wl.spec}, %{link wl.goal}, %{link wl.checklist}, %{link wl.rubric}, %{link wl.review}, %{link wl.status}.",
@@ -180,11 +220,13 @@ let PackValid = std.contract.custom (fun _label v =>
     "DONE only when %{link wl.checklist} %{join ", " (std.array.map (fun s => s.id) steps)} and %{join ", " (std.array.map (fun r => r.id) standing)} pass under %{link wl.rubric}. Paging a seat is not done.",
     "",
     "SQUAD: %{join "; " (std.array.map (fun s => "%{s.id} %{s.role}: %{s.title}") steps)}.",
-    "SEATS: %{join ", " roles}; idle is fail.",
+    "SEATS: %{seats_text_for fx}.",
     "HOSTS: %{build_rule}.",
     "MERGE: %{merge_rule}.",
     "FORBIDDEN: %{join "; " forbidden_all}.",
   ],
+
+  fence_text = fence_text_for facts,
 
   fm = fun r =>
     let tags = join "\n" (std.array.map (fun t => "  - %{t}") r.tags) in
@@ -225,14 +267,17 @@ let PackValid = std.contract.custom (fun _label v =>
 
   # Record fields are recursive: `x = x` inside a record literal refers to itself,
   # so outer values are bound with `let` before they are copied into a literal.
-  view =
-    let ft = fence_text in let fx = fence_max in let fp = forbidden_phrases in
+  view_for = fun fx =>
+    let ft = fence_text_for fx in let fm = fence_max in let fp = forbidden_phrases in
     let st = steps in let ro = roles in
-    { fence_text = ft, fence_max = fx, forbidden_phrases = fp, steps = st, roles = ro },
+    { fence_text = ft, fence_max = fm, forbidden_phrases = fp, steps = st, roles = ro },
+  view = view_for facts,
 
   # ---------- the export (interface proto-ncl-pack/v0) ----------
-  out =
-    let checked = view | PackValid in
+  # `render_with_facts` lets materialize.nu re-render a pack after merging a
+  # facts record, without changing the user's pack.ncl expression.
+  render_with_facts = fun fx =>
+    let checked = view_for fx | PackValid in
     let f = fun rel body => { path = "%{p_rel}/%{rel}", content = body, create_only = false } in
     let the_product = product in
     let the_slug = slug in
@@ -260,13 +305,13 @@ let PackValid = std.contract.custom (fun _label v =>
           ++ join "\n" [ "- Review: %{link wl.review}", "- Spec: %{link wl.spec}", "- Checklist: %{link wl.checklist}",
                          "- Rubric: %{link wl.rubric}", "- Goal: %{link wl.goal}", "- Status: %{link wl.status}" ]
           ++ "\n"),
-        f "REVIEW-%{slug}.md" (mkdoc "REVIEW" review_body [wl.spec, wl.checklist, wl.rubric, wl.goal]).content,
-        f "SPEC-%{slug}.md" (mkdoc "SPEC" (spec_body ++ "\n\n## File owners\n\n"
+        f (file_rel "reviews" "REVIEW") (mkdoc "REVIEW" review_body [wl.spec, wl.checklist, wl.rubric, wl.goal]).content,
+        f (file_rel "specs" "SPEC") (mkdoc "SPEC" (spec_body ++ "\n\n## File owners\n\n"
             ++ join "\n" (std.array.map (fun s => "- %{s.id} (%{s.role}): %{if s.paths == [] then "no files" else join ", " (std.array.map (fun p => "`%{p}`") s.paths)}") steps))
             [wl.review, wl.checklist, wl.rubric, wl.goal]).content,
-        f "CHECKLIST-%{slug}.md" (mkdoc "CHECKLIST" checklist_body [wl.spec, wl.rubric, wl.goal, wl.review]).content,
-        f "RUBRIC-%{slug}.md" (mkdoc "RUBRIC" rubric_body [wl.checklist, wl.spec, wl.goal, wl.review]).content,
-        f "GOAL-%{slug}.md" (mkdoc "GOAL"
+        f (file_rel "checklists" "CHECKLIST") (mkdoc "CHECKLIST" checklist_body [wl.spec, wl.rubric, wl.goal, wl.review]).content,
+        f (file_rel "rubrics" "RUBRIC") (mkdoc "RUBRIC" rubric_body [wl.checklist, wl.spec, wl.goal, wl.review]).content,
+        f (file_rel "goals" "GOAL") (mkdoc "GOAL"
             ("## Authorized goal text\n\n```\n%{checked.fence_text}\n```\n\nGoal text: %{num (len checked.fence_text)} characters (cap %{num checked.fence_max}).")
             [wl.spec, wl.checklist, wl.rubric, wl.review, wl.hub, wl.status]).content,
         f "schema/%{slug}/wiki.schema.json" (json {
@@ -300,8 +345,19 @@ let PackValid = std.contract.custom (fun _label v =>
           status = the_status,
           wiki = wiki_vals,
           squad = {
-            recon = "unverified", idle_is_fail = true,
-            seats = std.array.map (fun r => { role = r, writes = std.array.elem r writers, idle_is_fail = true }) roles,
+            recon = fx.occupancy, idle_is_fail = true,
+            seats = if std.array.length fx.seats == 0 then
+              std.array.map (fun r => { role = r, writes = std.array.elem r writers, idle_is_fail = true }) roles
+            else
+              std.array.map (fun s => {
+                role = s.role,
+                pane_id = if std.record.has_field "pane_id" s then s.pane_id else "",
+                tab_id = if std.record.has_field "tab_id" s then s.tab_id else "",
+                harness = if std.record.has_field "harness" s then s.harness else "",
+                model = if std.record.has_field "model" s then s.model else "",
+                writes = if std.record.has_field "writes" s then s.writes else true,
+                idle_is_fail = if std.record.has_field "idle_is_fail" s then s.idle_is_fail else true,
+              }) fx.seats,
           },
           sequence = std.array.map (fun s => { step = s.id, ids = [s.id], owner = s.role, depends_on = s.depends_on }) steps,
           standing = std.array.map (fun r => r.id) the_standing,
@@ -320,5 +376,12 @@ let PackValid = std.contract.custom (fun _label v =>
                  refs = [wl.spec, wl.checklist, wl.rubric, wl.goal], tags = [product, slug, "brief", w] }
             ++ "# Brief - %{w} (%{product}/%{slug})\n\nDark until PM pages. Read %{link wl.spec}, %{link wl.checklist}, and %{link wl.rubric}.\n"))
         writers,
+    },
+  out =
+    let rwf = render_with_facts in
+    let r = rwf facts in
+    r & {
+      render_with_facts | not_exported = rwf,
+      with_facts | not_exported = fun fx => rwf fx,
     },
 }

@@ -37,6 +37,21 @@ nu materialize.nu pack.ncl --vault <dir> [--facts facts.json] [--force] [--dry-r
 - `--force` rewrites pack files but never touches `create_only` files
   (`STATUS.md`), and it replaces `schema/<slug>/` only after asserting the
   target is exactly `<vault>/foundry/<product>/schema/<slug>`.
+- `--force` refuses with `PACK_LOCKED` when the existing hub (flat
+  `<slug>.md` or upper-case `<SLUG>.md`) has any status other than
+  `awaiting-approval`, including a missing or unparseable status. Nothing is
+  written and `schema/<slug>/` is untouched.
+- `--force` refuses with `PATH_UNSAFE` when the input `pack.ncl` resolves
+  inside `<vault>/foundry/<product>/schema/<slug>`; keep intent files at
+  `foundry/<product>/intent/<slug>.ncl`, never under `schema/<slug>/`.
+- `--facts facts.json` verifies roles and renders live seats. The GOAL fence
+  `SEATS` line and `schema/<slug>/goal.instance.json` `squad` carry real
+  `pane_id`/`tab_id`, harness, model, writes, and `idle_is_fail`; `recon`
+  comes from `occupancy`. Without facts, the fallback is bare roles and
+  `recon: "unverified"`. Intent may set `layout = 'nested` (default `'flat`)
+  to place REVIEW/SPEC/CHECKLIST/RUBRIC/GOAL under `reviews/`, `specs/`,
+  `checklists/`, `rubrics/`, and `goals/`; the hub, schema, briefs, and
+  wikilinks follow the same nested paths.
 
 Each run prints one JSON line and nothing else:
 
@@ -131,10 +146,12 @@ The same monotone rule holds for the other knobs: `fence_max` may tighten
 | `OWNER_OVERLAP` | two writers claim the same path or a path prefix |
 | `OWNER_ROLE_UNDECLARED` | a step role is absent from `roles` |
 | `STEP_ID_DUP` | two steps share an id |
+| `STEP_ID_INVALID` | a step id does not match `^G[0-9]+[a-z]?$` |
 | `IDENT_INVALID` | product, slug, or role is not a lower-case identifier |
 | `G_OWNER_UNKNOWN` | a role is not present in `--facts` seats |
 | `STAGE_COLLISION` | a target file exists and is not `create_only` |
-| `PATH_UNSAFE` | a `files[]` path leaves the product, has an empty segment or `..`, or the destructive `schema/<slug>/` target did not assert |
+| `PATH_UNSAFE` | a `files[]` path leaves the product, has an empty segment or `..`, the destructive `schema/<slug>/` target did not assert, or the input pack resolves inside `schema/<slug>/` |
+| `PACK_LOCKED` | `--force` targets a hub whose status is not `awaiting-approval` |
 | `NICKEL_ERROR` | Nickel rejected the pack and no coded diagnostic line exists |
 
 Coded violations arrive as `CODE: detail` lines. A whole-pack contract reports
@@ -158,5 +175,12 @@ note in `NICKEL_ERROR.detail`.
 - Written paths must stay under `foundry/<product>/`, with no empty segment,
   no `..`, no trailing slash.
 - `schema/<slug>/` is replaced only after the exact target is asserted.
+- A locked hub is never overwritten: `--force` checks the existing hub status
+  before touching any bytes.
+- Intent files live at `foundry/<product>/intent/<slug>.ncl`; an input pack
+  under `schema/<slug>/` is refused with `PATH_UNSAFE`.
+- Staging happens in a sibling temp directory outside the vault root and is
+  removed on success or failure, so no staging directory appears inside the
+  vault.
 - Identity is checked twice: contracts in `law.ncl`, and an independent check
   in `materialize.nu` (`IDENT_INVALID`) that does not trust the law.

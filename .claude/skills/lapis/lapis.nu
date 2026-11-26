@@ -4,9 +4,12 @@
 # Vault: --vault flag, else $LAPIS_VAULT, else the lapis config default.
 # Envelope: { ok, command, data, meta? } or { ok: false, command, error: { kind, message, exit } }.
 
+# No value may be read by lapis as a flag, even one that starts with `-` (a query or
+# path copied from a note or the web). Positional values go after `--`; an option's
+# value is attached to it as `--name=value`.
 def vault-args [vault: string] {
   let v = if $vault != "" { $vault } else { $env.LAPIS_VAULT? | default "" }
-  if $v == "" { [] } else { ["--vault" $v] }
+  if $v == "" { [] } else { [$"--vault=($v)"] }
 }
 
 # Run `lapis --json …`. The CLI prints its own JSON envelope on stdout, success or not;
@@ -69,7 +72,7 @@ def path-envelope [command: string, path: string, vault: string] {
   if not $t.ok {
     { ok: false, command: $command, error: { kind: "sandbox", message: $t.error, exit: 2 } }
   } else {
-    envelope $command [$command $t.path] $vault
+    envelope $command [$command "--" $t.path] $vault
   }
 }
 
@@ -86,9 +89,10 @@ def "main search" [
     finish { ok: false, command: "search", error: { kind: "bad_args", message: "--mode is bm25, hybrid or vector", exit: 1 } }
     return
   }
-  mut a = ["search" $query "-n" ($limit | into string) "--per-doc"]
+  mut a = ["search" "-n" ($limit | into string) "--per-doc"]
   $a = ($a | append (if $mode == "bm25" { ["--embedder" "none"] } else { ["--mode" $mode] }))
-  if $domain != "" { $a = ($a | append ["--domain" $domain]) }
+  if $domain != "" { $a = ($a | append $"--domain=($domain)") }
+  $a = ($a | append ["--" $query])
   let e = (envelope "search" $a $vault)
   if not $e.ok { finish $e; return }
   let hits = ($e.data.hits? | default [] | each {|h|
@@ -142,13 +146,13 @@ def "main list" [
   --vault: string = ""
 ] {
   mut a = ["list" "-n" ($limit | into string) "--offset" ($offset | into string)]
-  if $prefix != "" { $a = ($a | append $prefix) }
+  if $prefix != "" { $a = ($a | append ["--" $prefix]) }
   finish (envelope "list" $a $vault)
 }
 
 def "main neighbors" [path: string, --vault: string = ""] { finish (path-envelope "neighbors" $path $vault) }
 
-def "main resolve" [link: string, --vault: string = ""] { finish (envelope "resolve" ["resolve" $link] $vault) }
+def "main resolve" [link: string, --vault: string = ""] { finish (envelope "resolve" ["resolve" "--" $link] $vault) }
 
 def "main recent" [--limit (-n): int = 10, --vault: string = ""] {
   let e = (envelope "recent" ["analytics" "recent"] $vault)

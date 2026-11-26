@@ -39,7 +39,7 @@ One Nix flake ships four pieces:
 
 | Piece | What you get |
 | --- | --- |
-| Skills | `.agents/skills/`, the flake's only skills tree (`inputs.skills`). Read-only skills for Lapis, Facet, and Geode; Phantom's code-graph skill; `goal-pack`, which renders a goal pack from a Nickel intent; and the `check` and `laws` skills. Each skill is a short `SKILL.md` plus a Nushell or Nickel body. |
+| Skills | `.agents/skills/`, the flake's only skills tree (`inputs.skills`). Skills for Lapis (read, plus `reindex`), Facet and Geode (read-only); Phantom's code-graph skill; `tops-verify`, a verify recipe; `goal-pack`, which renders a goal pack from a Nickel intent; and the `check` and `laws` skills. Each skill is a short `SKILL.md` plus a Nushell or Nickel body. |
 | Jev | `jev-router`, a Rust binary built from [`crates/bezel-bridle`](crates/bezel-bridle). It prints one JSON verdict per call: loop-stop, a shadow diff check, permission catalogs, a small tool catalog, and typed MCP calls. Shadow is the default, and shadow never blocks. |
 | Adapters | `cursor-agent-jev` runs the gate, then execs `cursor-agent`. `grok-build-jev` is the Grok Build PreToolUse adapter. |
 | omp wrap, optional | `bezel-omp` runs your `omp` with an overlay that keeps one-line JSON skill replies whole. |
@@ -98,16 +98,17 @@ The tree in `.agents/skills/` is the source. `scripts/sync-skills` writes regula
 
 | Skill | What it answers | How it runs |
 | --- | --- | --- |
-| `lapis` | Vault search and read, read-only | `nu lapis.nu`, over `lapis --json` |
+| `lapis` | Vault search (`--mode bm25\|hybrid\|vector`), read (`--section`, `--max-bytes`), links, recent notes, status (`--brief`), and `reindex` of one note in the index | `nu lapis.nu`, over `lapis --json` |
 | `facet` | Request history, read-only | `nu facet.nu`, over `facet … --json` |
 | `geode` | Custody status, metadata only | `nu geode.nu`, over `geode --output json` |
 | `phantom` | Code graph: where a name is defined, callers, impact, call paths, co-change | `nu phantom.nu`, over `phantom-fractal` on `PATH` or `$PHANTOM_FRACTAL_BIN` |
+| `tops-verify` | A recipe: what a change reaches (`phantomq diff-impact`), a focused edit, then the TOPS gate (`cargo-tops`, `gotops`, `webtops`) | `SKILL.md` only; each step is its own call |
 | `goal-pack` | A multi-role goal pack (hub, REVIEW, SPEC, CHECKLIST, RUBRIC, GOAL, schemas, briefs) from one Nickel intent, judged by contracts before any write | `nu materialize.nu`, over `nickel export`; `law.ncl` holds the contracts |
 | `check` | Shadow diff check | `jev-router --check` |
 | `laws` | The bridle's laws in Bend (`LAWS.bend`, `PROOF.bend`) | `scripts/bend-gate.sh` runs `bend` on the proof. Bend checks the laws; it is not the hook. |
 | `bootstrap` | Placeholder so the input is a valid skills directory | none |
 
-Lapis, Facet, and Geode print one envelope: `{ ok, command, exit, data, error }`. Facet never requests bodies, blobs, `diff --bodies`, or `request run`. Geode refuses every command that is not metadata. `phantom` is a byte copy of Phantom `main`, never edited here, and keeps Phantom's own envelope. Its `index` may run whenever the index is missing or stale; it writes only to Phantom's data directory. `goal-pack` layers `law.ncl & org overlay & pack intent`: an upper layer binds `law.list_floor` to its own list, so a later layer can add rules but never drop one. Details for both, and the commit Phantom was copied from, are in [`.agents/skills/README.md`](.agents/skills/README.md).
+Facet and Geode print one envelope: `{ ok, command, exit, data, error }`. Lapis prints `{ ok, command, data }` (with `meta` when there is more to page or the index lags the disk), or `{ ok: false, command, error: { kind, message, exit } }`. It writes no note: `reindex` writes only the index. Its `SKILL.md` calls it as `lapisq`, an optional shim on `PATH` for `nu lapis.nu` that Bezel does not install. Facet never requests bodies, blobs, `diff --bodies`, or `request run`. Geode refuses every command that is not metadata. `phantom` is a byte copy of Phantom `main`, never edited here, and keeps Phantom's own envelope. Its `index` may run whenever the index is missing or stale; it writes only to Phantom's data directory. For an indexed repository, Phantom's README has a short `AGENTS.md` block that points an agent at the skill, so its first call can be the question without reading `SKILL.md`. `tops-verify` keeps the gate outside `phantom.nu`: Phantom never runs one, and its list of callers and tests never narrows what a gate runs. `goal-pack` layers `law.ncl & org overlay & pack intent`: an upper layer binds `law.list_floor` to its own list, so a later layer can add rules but never drop one. Details for both, and the commit Phantom was copied from, are in [`.agents/skills/README.md`](.agents/skills/README.md).
 
 ### Skills first, MCP still shipped
 

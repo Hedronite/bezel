@@ -20,17 +20,22 @@ Shipped skills:
 | `bootstrap` | Placeholder so the input is a valid skills directory (`*/SKILL.md`) |
 | `check` | Shadow Jev-first diff check (`jev-router --check`). Empty findings ≠ approval |
 | `laws` | Bend2 `LAWS.bend` for the bridle. The harness loads it. Bezel does not become the harness |
-| `lapis` | Read-only vault search and read through `lapis --json` (`lapis.nu`) |
+| `lapis` | Vault search and read through `lapis --json` (`lapis.nu`), and `reindex` of one note in the index. It writes no note |
 | `facet` | Read-only request history through `facet … --json` (`facet.nu`). No bodies, blobs, or `request run` |
 | `geode` | Metadata-only custody status through `geode --output json` (`geode.nu`). Anything else is refused |
-| `phantom` | Code graph through `phantom-fractal --json` (`phantom.nu`): where, callers, impact, path, co-change. Copied byte for byte from Phantom `main` at `8676aef` |
+| `phantom` | Code graph through `phantom-fractal --json` (`phantom.nu`): where, callers, impact, path, co-change. Copied byte for byte from Phantom `main` at `ee8a28b7173c35a7849f37176229e300f5838c6d` |
+| `tops-verify` | Recipe only (`SKILL.md`): `phantomq diff-impact`, a focused edit, then `cargo-tops gate`, `gotops gate`, or `webtops gate` |
 | `goal-pack` | Multi-role goal pack from one compact Nickel intent: hub, REVIEW, SPEC, CHECKLIST, RUBRIC, GOAL, schemas, briefs. Contracts judge the fence cap, standing rows, forbidden phrases, ownership, and step ids before any file is written |
 
 `lapis`, `facet`, and `geode` are the default agent interface for those tools.
-Each directory is a short `SKILL.md` plus one Nushell script. Every command
-prints the same JSON envelope: `{ ok, command, exit, data, error }`. The
-Nushell that runs them is the one pinned by this flake's nixpkgs lock. MCP
-servers for those tools stay supported; this tree does not turn them off.
+Each directory is a short `SKILL.md` plus one Nushell script. The Nushell that
+runs them is the one pinned by this flake's nixpkgs lock. MCP servers for those
+tools stay supported; this tree does not turn them off.
+
+`facet` and `geode` print one JSON envelope:
+`{ ok, command, exit, data, error }`. `lapis` prints
+`{ ok, command, data, meta? }` or
+`{ ok: false, command, error: { kind, message, exit } }`.
 
 `goal-pack` is the Tier-2 skill: `SKILL.md`, `law.ncl`, and `materialize.nu`.
 You write a plain-data `intent.ncl`; `law.ncl` renders every pack file and
@@ -53,6 +58,10 @@ It keeps Phantom's envelope, `{ ok, command, data, meta, exit: 0 }` or
 `{ ok: false, command, error, kind, stderr, exit }`, and exits with `exit`.
 It needs `phantom-fractal` on `PATH` or `$PHANTOM_FRACTAL_BIN`. `index` may
 run at any time; it writes Phantom's own data directory, never the repository.
+
+`tops-verify` is composition, not code: it names the calls to make and keeps the
+gate outside `phantom.nu`. `scripts/check-skill-cli.sh` checks that every
+`phantomq` command it names is in `phantom.nu help`.
 
 `programs.bezel.enable` copies each skill directory, as regular files, into:
 

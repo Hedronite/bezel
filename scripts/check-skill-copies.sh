@@ -41,10 +41,12 @@ for dest in "${copies[@]}"; do
   skill_sync_root "$canonical" "$dest" check
 done
 
-# Phantom's skill is a byte copy of Phantom main. Both files ship in the
-# canonical tree and in every harness copy, as regular files.
+# Phantom's skill is a byte copy of Phantom main. It, lapis, and the
+# tops-verify recipe ship in the canonical tree and in every harness copy, as
+# regular files: equal trees alone would not notice one missing everywhere.
 for tree in "$canonical" "${copies[@]}"; do
-  for f in phantom/SKILL.md phantom/phantom.nu; do
+  for f in phantom/SKILL.md phantom/phantom.nu lapis/SKILL.md lapis/lapis.nu \
+    tops-verify/SKILL.md; do
     if [[ -L $tree/$f || ! -f $tree/$f ]]; then
       skill_fail "missing or linked $tree/$f"
     fi

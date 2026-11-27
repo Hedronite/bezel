@@ -313,7 +313,7 @@ PY
 
 # search: bm25 by default (no embedder), one row per hit, snippet collapsed, no body.
 run_lapis "$work/out" search "phrase" --limit 5 --domain notes
-log_has $'lapis\t--json\tsearch\tphrase\t-n\t5\t--per-doc\t--embedder\tnone\t--domain\tnotes'
+log_has $'lapis\t--json\tsearch\t-n\t5\t--per-doc\t--embedder\tnone\t--domain=notes\t--\tphrase'
 log_lacks "--vault"
 lapis_is "$work/out" 'd["data"] == [{"path": "notes/a.md", "title": "Alpha", "heading": "Intro", "score": 1.5, "snippet": "one two"}]'
 lapis_is "$work/out" '"meta" not in d'
@@ -339,10 +339,10 @@ clear_fake
 
 export LAPIS_VAULT="$work/from-env"
 run_lapis "$work/out" status --vault "$work/from-flag"
-log_has $'--vault\t'"$work/from-flag"
+log_has $'--vault='"$work/from-flag"
 log_lacks "$work/from-env"
 run_lapis "$work/out" status
-log_has $'--vault\t'"$work/from-env"
+log_has $'--vault='"$work/from-env"
 unset LAPIS_VAULT
 
 run_lapis "$work/out" status --brief
@@ -353,7 +353,7 @@ log_has $'lapis\t--json\tdoctor'
 
 # read: --section stops at the next heading of the same level; --max-bytes says what it cut.
 run_lapis "$work/out" read notes/a.md --section "part one"
-log_has $'lapis\t--json\tread\tnotes/a.md'
+log_has $'lapis\t--json\tread\t--\tnotes/a.md'
 lapis_is "$work/out" 'd["data"]["body"] == "## Part One\nkept\n### Sub\nalso kept" and d["data"]["body_truncated"] is False'
 
 run_lapis "$work/out" read notes/a.md --max-bytes 7
@@ -364,7 +364,7 @@ lapis_is "$work/out" 'd["error"]["kind"] == "not_found" and d["error"]["exit"] =
 
 # list: the prefix goes to the index, and meta says there is more.
 run_lapis "$work/out" list --prefix projects/ --limit 1 --offset 2
-log_has $'lapis\t--json\tlist\t-n\t1\t--offset\t2\tprojects/'
+log_has $'lapis\t--json\tlist\t-n\t1\t--offset\t2\t--\tprojects/'
 lapis_is "$work/out" 'd["meta"] == {"truncated": True, "next": 1}'
 
 run_lapis "$work/out" recent --limit 1
@@ -372,9 +372,9 @@ log_has $'lapis\t--json\tanalytics\trecent'
 lapis_is "$work/out" 'd["data"] == [{"path": "notes/a.md", "title": "Alpha", "domain": "notes", "mtime_iso": "2024-01-02T00:00:00Z"}]'
 
 run_lapis "$work/out" neighbors notes/a.md
-log_has $'lapis\t--json\tneighbors\tnotes/a.md'
+log_has $'lapis\t--json\tneighbors\t--\tnotes/a.md'
 run_lapis "$work/out" resolve "[[Alpha]]"
-log_has $'lapis\t--json\tresolve\t[[Alpha]]'
+log_has $'lapis\t--json\tresolve\t--\t[[Alpha]]'
 
 # reindex: one note. An absolute path inside the vault becomes relative; one
 # outside it never reaches the CLI.
@@ -382,11 +382,40 @@ mkdir -p "$work/v/notes" "$work/outside"
 : >"$work/v/notes/a.md"
 : >"$work/outside/b.md"
 run_lapis "$work/out" reindex "$work/v/notes/a.md" --vault "$work/v"
-log_has $'reindex\tnotes/a.md'
+log_has $'reindex\t--\tnotes/a.md'
 for cmd in reindex read neighbors; do
   run_lapis "$work/out" "$cmd" "$work/outside/b.md" --vault "$work/v"
   lapis_is "$work/out" 'd["error"]["kind"] == "sandbox" and d["error"]["exit"] == 2'
   log_empty
+done
+
+# A value that starts with `-` never reaches lapis as a flag. Each call is compared
+# as a whole argv: positionals only after `--`, option values only as --name=value.
+log_is() {
+  [[ "$(cat "$FAKE_LOG")" == "$1" ]] || fail "lapis argv: want [$1], got [$(cat "$FAKE_LOG")]"
+}
+tab=$'\t'
+search_head="lapis$tab--json${tab}search$tab-n${tab}5$tab--per-doc$tab--embedder${tab}none"
+list_head="lapis$tab--json${tab}list$tab-n${tab}200$tab--offset${tab}0"
+for value in --lattice=http://127.0.0.1:9 --all --vectors --help --include-archives; do
+  run_lapis "$work/out" search -- "$value"
+  log_is "$search_head$tab--$tab$value"
+  run_lapis "$work/out" list --prefix "$value"
+  log_is "$list_head$tab--$tab$value"
+  run_lapis "$work/out" list --prefix="$value"
+  log_is "$list_head$tab--$tab$value"
+  for cmd in read neighbors resolve reindex; do
+    run_lapis "$work/out" "$cmd" -- "$value"
+    log_is "lapis$tab--json$tab$cmd$tab--$tab$value"
+  done
+  run_lapis "$work/out" search q --domain="$value"
+  log_is "$search_head$tab--domain=$value$tab--${tab}q"
+  run_lapis "$work/out" doctor --vault="$value"
+  log_is "lapis$tab--json$tab--vault=$value${tab}doctor"
+  export LAPIS_VAULT=$value
+  run_lapis "$work/out" doctor
+  log_is "lapis$tab--json$tab--vault=$value${tab}doctor"
+  unset LAPIS_VAULT
 done
 
 export FAKE_EXIT=3 FAKE_STDOUT='{"ok":false,"error":{"kind":"not_found","message":"no note","exit":3}}'
